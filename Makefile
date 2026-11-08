@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = LocationHook
 LocationHook_FILES = Tweak.x
-LocationHook_FRAMEWORKS = UIKit CoreLocation QuartzCore
+LocationHook_FRAMEWORKS = UIKit CoreLocation QuartzCore WebKit
 LocationHook_CFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
