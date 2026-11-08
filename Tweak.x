@@ -1,24 +1,23 @@
 // Language: Objective-C (Logos)
 // Target: iOS 13.0 - 18.x (arm64 / arm64e)
-// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + DCAppAttest Fallback
+// Features: Dual Embedded Logos + Username & Password VPS Login + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Save Pin
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <WebKit/WebKit.h>
-#import <DeviceCheck/DeviceCheck.h>
 
 // Global persistent state
 static BOOL g_spoofEnabled = NO;
 static CLLocationDegrees g_spoofLatitude = 24.46094;
 static CLLocationDegrees g_spoofLongitude = 54.35718;
 static UIWindow *g_window = nil;
-static NSString *g_activeLicenseKey = nil;
 static BOOL g_sessionWatcherRunning = NO;
 static dispatch_source_t g_sessionTimer = nil;
 static dispatch_once_t g_watcherOnceToken = 0;
 static dispatch_once_t g_windowOnceToken = 0;
 
 static NSString * const kFavKey = @"HadiModSavedFavorites";
+static NSString * const kProjectSlug = @"hadi-gps-3";
 
 // Base64 Embedded Circular Logos
 static NSString * const kLogoHadiModBase64 = @"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";
@@ -29,6 +28,18 @@ static UIImage *getImageFromBase64(NSString *b64) {
     NSData *data = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
     if (!data) return nil;
     return [UIImage imageWithData:data];
+}
+
+static NSString *getOrCreateDeviceId() {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    NSString *devId = [defs stringForKey:@"HadiMod_DeviceId"];
+    if (!devId || devId.length == 0) {
+        devId = [UIDevice currentDevice].identifierForVendor.UUIDString;
+        if (!devId) devId = [[NSUUID UUID] UUIDString];
+        [defs setObject:devId forKey:@"HadiMod_DeviceId"];
+        [defs synchronize];
+    }
+    return devId;
 }
 
 // Forward Declarations
@@ -42,20 +53,11 @@ static UIImage *getImageFromBase64(NSString *b64) {
 @property (nonatomic, strong) UIButton *btnFav;
 @end
 
-static void showActivationDialog(void);
+static void showLoginDialog(void);
+static void executeLogin(NSString *user, NSString *pass);
 static void startSessionWatcher(void);
 static void stopSessionWatcher(void);
 static void showRevokedAlert(NSString *title, NSString *message);
-
-// ==========================================
-// DEVICE CHECK / APP ATTEST FALLBACK HOOK
-// (Forces legacy standard authentication if App Attest has invalid cert)
-// ==========================================
-%hook DCAppAttestService
-- (BOOL)isSupported {
-    return NO;
-}
-%end
 
 // ==========================================
 // SESSION TERMINATION & ALERT DISPATCH
@@ -63,9 +65,11 @@ static void showRevokedAlert(NSString *title, NSString *message);
 static void showRevokedAlert(NSString *title, NSString *message) {
     dispatch_async(dispatch_get_main_queue(), ^{
         g_spoofEnabled = NO;
-        g_activeLicenseKey = nil;
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"HadiModLicenseToken"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        [defs setBool:NO forKey:@"HadiMod_IsLoggedIn"];
+        [defs removeObjectForKey:@"HadiMod_Token"];
+        [defs removeObjectForKey:@"HadiMod_Expiry"];
+        [defs synchronize];
         stopSessionWatcher();
         
         UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
@@ -100,7 +104,7 @@ static void startSessionWatcher(void) {
         g_sessionTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
         dispatch_source_set_timer(g_sessionTimer, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(g_sessionTimer, ^{
-            NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:@"HadiModLicenseToken"];
+            NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:@"HadiMod_Token"];
             if (!token || token.length == 0) {
                 return;
             }
@@ -109,6 +113,8 @@ static void startSessionWatcher(void) {
             NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
             [req setHTTPMethod:@"GET"];
             [req setValue:[NSString stringWithFormat:@"Bearer %@", token] forHTTPHeaderField:@"Authorization"];
+            [req setValue:kProjectSlug forHTTPHeaderField:@"x-project"];
+            [req setValue:getOrCreateDeviceId() forHTTPHeaderField:@"x-device-id"];
             [req setTimeoutInterval:7.0];
             
             NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
@@ -117,7 +123,7 @@ static void startSessionWatcher(void) {
                 
                 if (statusCode == 401 || statusCode == 403 || statusCode == 404) {
                     NSString *reason = @"Session Revoked";
-                    NSString *detail = @"Your license access has been terminated by administrator.";
+                    NSString *detail = @"Your account access has been terminated by administrator.";
                     if (data) {
                         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
                         NSString *msg = json[@"message"];
@@ -471,16 +477,80 @@ static void stopSessionWatcher(void) {
 @end
 
 // ==========================================
-// ACTIVATION / LOCK SCREEN DIALOG
+// VPS AUTHENTICATION / LOGIN DIALOG
 // ==========================================
-static void showActivationDialog(void) {
+static void executeLogin(NSString *user, NSString *pass) {
+    UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+    while (root.presentedViewController) {
+        root = root.presentedViewController;
+    }
+    
+    NSURL *url = [NSURL URLWithString:@"https://api.hadimod3.net/auth/customer/login"];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    
+    NSDictionary *body = @{
+        @"project": kProjectSlug,
+        @"username": user,
+        @"password": pass,
+        @"deviceId": getOrCreateDeviceId()
+    };
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+    
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSHTTPURLResponse *http = (NSHTTPURLResponse *)resp;
+            if (!err && http.statusCode == 200 && data) {
+                NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                NSString *token = json[@"token"];
+                if (token && token.length > 0) {
+                    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+                    [defs setBool:YES forKey:@"HadiMod_IsLoggedIn"];
+                    [defs setObject:token forKey:@"HadiMod_Token"];
+                    [defs setObject:user forKey:@"HadiMod_Username"];
+                    
+                    double expiry = 0.0;
+                    if (json[@"expiresAt"]) {
+                        expiry = [json[@"expiresAt"] doubleValue];
+                    } else if (json[@"customer"] && json[@"customer"][@"expiresAt"]) {
+                        expiry = [json[@"customer"][@"expiresAt"] doubleValue];
+                    }
+                    if (expiry > 0) [defs setDouble:expiry forKey:@"HadiMod_Expiry"];
+                    [defs synchronize];
+                    
+                    startSessionWatcher();
+                    
+                    HadiModMapViewController *mapVC = [[HadiModMapViewController alloc] init];
+                    mapVC.modalPresentationStyle = UIModalPresentationFullScreen;
+                    [root presentViewController:mapVC animated:YES completion:nil];
+                    return;
+                }
+            }
+            
+            NSString *errMsg = @"Invalid Username or Password";
+            if (data) {
+                NSDictionary *ej = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if (ej[@"message"]) errMsg = ej[@"message"];
+            }
+            UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"Login Failed"
+                                                                              message:errMsg
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+            [errAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [root presentViewController:errAlert animated:YES completion:nil];
+        });
+    }];
+    [task resume];
+}
+
+static void showLoginDialog(void) {
     UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
     while (root.presentedViewController) {
         root = root.presentedViewController;
     }
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"\n\n\n\nHADI MOD X ERROR EXPERT"
-                                                                   message:@"Enter your license key to unlock GPS spoofer:"
+                                                                   message:@"Enter your username and password to log in:"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     
     // Add Dual Circular Logos to Alert Dialog
@@ -507,55 +577,25 @@ static void showActivationDialog(void) {
     }
     
     [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"License Key";
+        tf.placeholder = @"Username";
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"Password";
+        tf.secureTextEntry = YES;
         tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
         tf.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Activate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        NSString *key = alert.textFields[0].text;
-        if (!key || key.length == 0) return;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Login" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *user = alert.textFields[0].text;
+        NSString *pass = alert.textFields[1].text;
+        if (!user || user.length == 0 || !pass || pass.length == 0) return;
         
-        NSURL *url = [NSURL URLWithString:@"https://api.hadimod3.net/auth/customer/login"];
-        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-        [req setHTTPMethod:@"POST"];
-        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        NSDictionary *body = @{@"licenseKey": key};
-        req.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
-        
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSHTTPURLResponse *http = (NSHTTPURLResponse *)resp;
-                if (!err && http.statusCode == 200 && data) {
-                    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-                    NSString *token = json[@"token"];
-                    if (token && token.length > 0) {
-                        [[NSUserDefaults standardUserDefaults] setObject:token forKey:@"HadiModLicenseToken"];
-                        [[NSUserDefaults standardUserDefaults] synchronize];
-                        g_activeLicenseKey = key;
-                        startSessionWatcher();
-                        
-                        HadiModMapViewController *mapVC = [[HadiModMapViewController alloc] init];
-                        mapVC.modalPresentationStyle = UIModalPresentationFullScreen;
-                        [root presentViewController:mapVC animated:YES completion:nil];
-                        return;
-                    }
-                }
-                
-                NSString *errMsg = @"Invalid, expired, or banned key.";
-                if (data) {
-                    NSDictionary *ej = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-                    if (ej[@"message"]) errMsg = ej[@"message"];
-                }
-                UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"Activation Failed"
-                                                                                  message:errMsg
-                                                                           preferredStyle:UIAlertControllerStyleAlert];
-                [errAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-                [root presentViewController:errAlert animated:YES completion:nil];
-            });
-        }];
-        [task resume];
+        executeLogin(user, pass);
     }]];
     
     [root presentViewController:alert animated:YES completion:nil];
@@ -574,8 +614,10 @@ static void showActivationDialog(void) {
         tap.numberOfTapsRequired = 2;
         [self addGestureRecognizer:tap];
         
-        NSString *savedToken = [[NSUserDefaults standardUserDefaults] stringForKey:@"HadiModLicenseToken"];
-        if (savedToken && savedToken.length > 0) {
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        BOOL loggedIn = [defs boolForKey:@"HadiMod_IsLoggedIn"];
+        NSString *token = [defs stringForKey:@"HadiMod_Token"];
+        if (loggedIn && token && token.length > 0) {
             startSessionWatcher();
         }
     });
@@ -584,8 +626,17 @@ static void showActivationDialog(void) {
 %new
 - (void)hadiModGestureTriggered:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateEnded) {
-        NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:@"HadiModLicenseToken"];
-        if (token && token.length > 0) {
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        BOOL loggedIn = [defs boolForKey:@"HadiMod_IsLoggedIn"];
+        NSString *token = [defs stringForKey:@"HadiMod_Token"];
+        
+        double expiry = [defs doubleForKey:@"HadiMod_Expiry"];
+        if (expiry > 0 && [[NSDate date] timeIntervalSince1970] > expiry) {
+            showRevokedAlert(@"Subscription Expired", @"Your subscription period has ended. Please renew your account.");
+            return;
+        }
+        
+        if (loggedIn && token && token.length > 0) {
             UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
             while (root.presentedViewController) {
                 root = root.presentedViewController;
@@ -596,7 +647,7 @@ static void showActivationDialog(void) {
             mapVC.modalPresentationStyle = UIModalPresentationFullScreen;
             [root presentViewController:mapVC animated:YES completion:nil];
         } else {
-            showActivationDialog();
+            showLoginDialog();
         }
     }
 }
