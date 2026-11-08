@@ -14,7 +14,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git make perl xz-utils build-essential libtinfo5 zstd curl
+          sudo apt-get install -y git make perl xz-utils build-essential libtinfo5 zstd curl wget dpkg
 
       - name: Setup Theos
         run: |
@@ -33,6 +33,15 @@ jobs:
           curl -L https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma -o toolchain.tar.lzma
           tar --lzma -xf toolchain.tar.lzma -C toolchain/linux/iphone
           rm toolchain.tar.lzma
+
+      - name: Install CydiaSubstrate Library
+        run: |
+          cd /tmp
+          wget http://apt.saurik.com/debs/mobilesubstrate_0.9.6011_iphoneos-arm.deb
+          dpkg-deb -x mobilesubstrate_0.9.6011_iphoneos-arm.deb substrate
+          cp substrate/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate $HOME/theos/lib/libsubstrate.dylib
+          cp substrate/Library/Frameworks/CydiaSubstrate.framework/Headers/CydiaSubstrate.h $HOME/theos/include/substrate.h
+          rm -rf substrate mobilesubstrate_0.9.6011_iphoneos-arm.deb
 
       - name: Compile Tweak
         run: |
