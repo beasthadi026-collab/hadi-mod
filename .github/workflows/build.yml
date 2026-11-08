@@ -25,6 +25,7 @@ jobs:
         run: |
           rm -rf $HOME/theos/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $HOME/theos/sdks
+          rm -rf $HOME/theos/sdks/iPhoneOS14.5.sdk $HOME/theos/sdks/iPhoneOS15* $HOME/theos/sdks/iPhoneOS16*
 
       - name: Install Linux iOS Toolchain (Clang)
         run: |
