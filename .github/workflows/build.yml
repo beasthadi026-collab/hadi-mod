@@ -31,8 +31,10 @@ jobs:
           mkdir -p $HOME/theos/toolchain/linux/iphone
           cd $HOME/theos
           curl -L https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma -o toolchain.tar.lzma
-          tar --lzma -xf toolchain.tar.lzma -C toolchain/linux/iphone
-          rm toolchain.tar.lzma
+          TMP=$(mktemp -d)
+          tar --lzma -xf toolchain.tar.lzma -C $TMP
+          mv $TMP/ios-arm64e-clang-toolchain/* $HOME/theos/toolchain/linux/iphone/
+          rm -rf $TMP toolchain.tar.lzma
 
       - name: Install CydiaSubstrate Library
         run: |
