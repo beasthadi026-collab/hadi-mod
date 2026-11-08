@@ -1,10 +1,11 @@
 // Language: Objective-C (Logos)
 // Target: iOS 13.0 - 18.x (arm64 / arm64e)
-// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Clean PAC Safe
+// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + DCAppAttest Fallback
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <WebKit/WebKit.h>
+#import <DeviceCheck/DeviceCheck.h>
 
 // Global persistent state
 static BOOL g_spoofEnabled = NO;
@@ -45,6 +46,16 @@ static void showActivationDialog(void);
 static void startSessionWatcher(void);
 static void stopSessionWatcher(void);
 static void showRevokedAlert(NSString *title, NSString *message);
+
+// ==========================================
+// DEVICE CHECK / APP ATTEST FALLBACK HOOK
+// (Forces legacy standard authentication if App Attest has invalid cert)
+// ==========================================
+%hook DCAppAttestService
+- (BOOL)isSupported {
+    return NO;
+}
+%end
 
 // ==========================================
 // SESSION TERMINATION & ALERT DISPATCH
