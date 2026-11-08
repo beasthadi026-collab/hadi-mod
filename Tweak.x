@@ -1,11 +1,13 @@
 // Language: Objective-C (Logos)
 // Target: iOS 13.0 - 18.x (arm64)
-// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Safe Bundle ID Spoofing
+// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Smart IAL 403 Spoofer
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <WebKit/WebKit.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <dlfcn.h>
+#import <substrate.h>
 
 // Global persistent state
 static BOOL g_spoofEnabled = NO;
@@ -49,17 +51,32 @@ static void showRevokedAlert(NSString *title, NSString *message);
 
 // ==========================================
 // SMART CALLER-FILTERED BUNDLE ID SPOOFER
-// (Prevents IAL 403 Unsupported Rider App without crashing iOS Sandbox)
+// (Bypasses IAL 403 Unauthorized Rider App without crashing iOS Sandbox)
 // ==========================================
 static BOOL isAppOrMpdeCaller(void *caller) {
     if (!caller) return NO;
     Dl_info info;
     if (dladdr(caller, &info) && info.dli_fname) {
-        if (strstr(info.dli_fname, "Roadrunner") || strstr(info.dli_fname, "mpde")) {
+        const char *fname = info.dli_fname;
+        if (strstr(fname, "Roadrunner") || strstr(fname, "mpde") || strstr(fname, "Talabat")) {
             return YES;
         }
     }
     return NO;
+}
+
+static CFStringRef (*orig_CFBundleGetIdentifier)(CFBundleRef bundle) = NULL;
+static CFStringRef hooked_CFBundleGetIdentifier(CFBundleRef bundle) {
+    if (bundle == CFBundleGetMainBundle()) {
+        void *caller = __builtin_return_address(0);
+        if (isAppOrMpdeCaller(caller)) {
+            return CFSTR("com.logistics.rider.talabat");
+        }
+    }
+    if (orig_CFBundleGetIdentifier) {
+        return orig_CFBundleGetIdentifier(bundle);
+    }
+    return CFSTR("com.logistics.rider.talabat");
 }
 
 %hook NSBundle
@@ -95,6 +112,20 @@ static BOOL isAppOrMpdeCaller(void *caller) {
         }
     }
     %orig(value, field);
+}
+
+- (void)setHTTPBody:(NSData *)data {
+    if (data && [data length] > 0) {
+        NSString *realId = [[NSBundle mainBundle] bundleIdentifier];
+        if (realId && realId.length > 0 && ![realId isEqualToString:@"com.logistics.rider.talabat"]) {
+            NSString *bodyStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            if (bodyStr && [bodyStr containsString:realId]) {
+                bodyStr = [bodyStr stringByReplacingOccurrencesOfString:realId withString:@"com.logistics.rider.talabat"];
+                data = [bodyStr dataUsingEncoding:NSUTF8StringEncoding];
+            }
+        }
+    }
+    %orig(data);
 }
 %end
 
@@ -666,3 +697,13 @@ static void showActivationDialog(void) {
 }
 
 %end
+
+// ==========================================
+// CONSTRUCTOR INITIALIZER (Hook C API CFBundleGetIdentifier)
+// ==========================================
+%ctor {
+    void *sym = MSFindSymbol(NULL, "_CFBundleGetIdentifier");
+    if (sym) {
+        MSHookFunction(sym, (void *)hooked_CFBundleGetIdentifier, (void **)&orig_CFBundleGetIdentifier);
+    }
+}
