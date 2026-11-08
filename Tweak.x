@@ -1,13 +1,10 @@
 // Language: Objective-C (Logos)
-// Target: iOS 13.0 - 18.x (arm64)
-// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Smart IAL 403 Spoofer
+// Target: iOS 13.0 - 18.x (arm64 / arm64e)
+// Features: Dual Embedded Logos + Custom GPS + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Clean PAC Safe
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <WebKit/WebKit.h>
-#import <CoreFoundation/CoreFoundation.h>
-#import <dlfcn.h>
-#import <substrate.h>
 
 // Global persistent state
 static BOOL g_spoofEnabled = NO;
@@ -48,109 +45,6 @@ static void showActivationDialog(void);
 static void startSessionWatcher(void);
 static void stopSessionWatcher(void);
 static void showRevokedAlert(NSString *title, NSString *message);
-
-// ==========================================
-// SMART CALLER-FILTERED BUNDLE ID SPOOFER
-// (Bypasses IAL 403 Unauthorized Rider App without crashing iOS Sandbox)
-// ==========================================
-static BOOL isAppOrMpdeCaller(void *caller) {
-    if (!caller) return NO;
-    Dl_info info;
-    if (dladdr(caller, &info) && info.dli_fname) {
-        const char *fname = info.dli_fname;
-        if (strstr(fname, "Roadrunner") || strstr(fname, "mpde") || strstr(fname, "Talabat")) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-static CFStringRef (*orig_CFBundleGetIdentifier)(CFBundleRef bundle) = NULL;
-static CFStringRef hooked_CFBundleGetIdentifier(CFBundleRef bundle) {
-    if (bundle == CFBundleGetMainBundle()) {
-        void *caller = __builtin_return_address(0);
-        if (isAppOrMpdeCaller(caller)) {
-            return CFSTR("com.logistics.rider.talabat");
-        }
-    }
-    if (orig_CFBundleGetIdentifier) {
-        return orig_CFBundleGetIdentifier(bundle);
-    }
-    return CFSTR("com.logistics.rider.talabat");
-}
-
-%hook NSBundle
-- (NSString *)bundleIdentifier {
-    if (self == [NSBundle mainBundle]) {
-        void *caller = __builtin_return_address(0);
-        if (isAppOrMpdeCaller(caller)) {
-            return @"com.logistics.rider.talabat";
-        }
-    }
-    return %orig;
-}
-
-- (id)objectForInfoDictionaryKey:(NSString *)key {
-    if (self == [NSBundle mainBundle] && [key isEqualToString:@"CFBundleIdentifier"]) {
-        void *caller = __builtin_return_address(0);
-        if (isAppOrMpdeCaller(caller)) {
-            return @"com.logistics.rider.talabat";
-        }
-    }
-    return %orig(key);
-}
-%end
-
-%hook NSMutableURLRequest
-- (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
-    if (value && [value isKindOfClass:[NSString class]]) {
-        NSString *realId = [[NSBundle mainBundle] bundleIdentifier];
-        if (realId && realId.length > 0 && ![realId isEqualToString:@"com.logistics.rider.talabat"]) {
-            if ([value containsString:realId]) {
-                value = [value stringByReplacingOccurrencesOfString:realId withString:@"com.logistics.rider.talabat"];
-            }
-        }
-    }
-    %orig(value, field);
-}
-
-- (void)setHTTPBody:(NSData *)data {
-    if (data && [data length] > 0) {
-        NSString *realId = [[NSBundle mainBundle] bundleIdentifier];
-        if (realId && realId.length > 0 && ![realId isEqualToString:@"com.logistics.rider.talabat"]) {
-            NSString *bodyStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            if (bodyStr && [bodyStr containsString:realId]) {
-                bodyStr = [bodyStr stringByReplacingOccurrencesOfString:realId withString:@"com.logistics.rider.talabat"];
-                data = [bodyStr dataUsingEncoding:NSUTF8StringEncoding];
-            }
-        }
-    }
-    %orig(data);
-}
-%end
-
-%hook NSURLSessionConfiguration
-- (void)setHTTPAdditionalHeaders:(NSDictionary *)headers {
-    if (headers && [headers isKindOfClass:[NSDictionary class]]) {
-        NSMutableDictionary *newHeaders = [headers mutableCopy];
-        NSString *realId = [[NSBundle mainBundle] bundleIdentifier];
-        if (realId && realId.length > 0 && ![realId isEqualToString:@"com.logistics.rider.talabat"]) {
-            for (NSString *key in [headers allKeys]) {
-                id val = headers[key];
-                if ([val isKindOfClass:[NSString class]]) {
-                    NSString *strVal = (NSString *)val;
-                    if ([strVal containsString:realId]) {
-                        newHeaders[key] = [strVal stringByReplacingOccurrencesOfString:realId withString:@"com.logistics.rider.talabat"];
-                    }
-                }
-            }
-        }
-        %orig([newHeaders copy]);
-        return;
-    }
-    %orig(headers);
-}
-%end
 
 // ==========================================
 // SESSION TERMINATION & ALERT DISPATCH
@@ -697,13 +591,3 @@ static void showActivationDialog(void) {
 }
 
 %end
-
-// ==========================================
-// CONSTRUCTOR INITIALIZER (Hook C API CFBundleGetIdentifier)
-// ==========================================
-%ctor {
-    void *sym = MSFindSymbol(NULL, "_CFBundleGetIdentifier");
-    if (sym) {
-        MSHookFunction(sym, (void *)hooked_CFBundleGetIdentifier, (void **)&orig_CFBundleGetIdentifier);
-    }
-}
