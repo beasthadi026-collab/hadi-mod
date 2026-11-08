@@ -29,6 +29,9 @@ static void clearSessionAndNotify(NSString *title, NSString *reason);
 static BOOL isCustomerLoggedIn(void);
 static BOOL isExpired(void);
 static void startSessionWatcher(void);
+static NSArray *getSavedFavorites(void);
+static void saveFavoriteCoordinate(NSString *name, double lat, double lon);
+static void clearAllFavorites(void);
 
 static void loadSavedConfig() {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -52,6 +55,30 @@ static BOOL isExpired() {
         return YES;
     }
     return NO;
+}
+
+static NSArray *getSavedFavorites() {
+    NSArray *arr = [[NSUserDefaults standardUserDefaults] arrayForKey:@"HadiMod_Favorites"];
+    return arr ?: @[];
+}
+
+static void saveFavoriteCoordinate(NSString *name, double lat, double lon) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSMutableArray *arr = [NSMutableArray arrayWithArray:[defaults arrayForKey:@"HadiMod_Favorites"] ?: @[]];
+    NSDictionary *item = @{
+        @"name": name,
+        @"lat": @(lat),
+        @"lon": @(lon)
+    };
+    [arr addObject:item];
+    [defaults setObject:arr forKey:@"HadiMod_Favorites"];
+    [defaults synchronize];
+}
+
+static void clearAllFavorites() {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults removeObjectForKey:@"HadiMod_Favorites"];
+    [defaults synchronize];
 }
 
 static NSString *getOrCreateDeviceId() {
@@ -126,9 +153,13 @@ static double parseExpiryFromDict(NSDictionary *dict) {
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *startBtn;
 @property (nonatomic, strong) UIButton *stopBtn;
+@property (nonatomic, strong) UIButton *saveBtn;
+@property (nonatomic, strong) UIButton *favBtn;
 - (void)loadGoogleMap;
 - (void)startSpoofTapped;
 - (void)stopSpoofTapped;
+- (void)savePinTapped;
+- (void)favoritesTapped;
 - (void)closeTapped;
 @end
 
@@ -141,6 +172,7 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     CGFloat screenWidth = self.view.bounds.size.width;
     CGFloat screenHeight = self.view.bounds.size.height;
     CGFloat topBarHeight = 110;
+    CGFloat bottomBarHeight = 135;
 
     // 1. Top Header Bar
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, screenWidth, topBarHeight)];
@@ -204,21 +236,43 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     config.userContentController = userContent;
 
     CGFloat mapY = topBarHeight;
-    CGFloat mapHeight = screenHeight - mapY - 95;
+    CGFloat mapHeight = screenHeight - mapY - bottomBarHeight;
     self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(0, mapY, screenWidth, mapHeight) configuration:config];
     [self.view addSubview:self.webView];
 
     [self loadGoogleMap];
 
-    // 3. Bottom Control Bar with START & STOP Buttons
-    UIView *bottomBar = [[UIView alloc] initWithFrame:CGRectMake(0, screenHeight - 95, screenWidth, 95)];
+    // 3. Bottom Control Bar with SAVE, FAVORITES, START & STOP
+    UIView *bottomBar = [[UIView alloc] initWithFrame:CGRectMake(0, screenHeight - bottomBarHeight, screenWidth, bottomBarHeight)];
     bottomBar.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.1 alpha:0.98];
     [self.view addSubview:bottomBar];
 
-    CGFloat btnWidth = (screenWidth - 48) / 2;
+    CGFloat btnWidth = (screenWidth - 40) / 2;
 
+    // Row 1: Save & Favorites
+    self.saveBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.saveBtn.frame = CGRectMake(14, 10, btnWidth, 38);
+    self.saveBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.35 blue:0.6 alpha:1.0];
+    [self.saveBtn setTitle:@"+ SAVE PIN" forState:UIControlStateNormal];
+    [self.saveBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.saveBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    self.saveBtn.layer.cornerRadius = 8;
+    [self.saveBtn addTarget:self action:@selector(savePinTapped) forControlEvents:UIControlEventTouchUpInside];
+    [bottomBar addSubview:self.saveBtn];
+
+    self.favBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.favBtn.frame = CGRectMake(14 + btnWidth + 12, 10, btnWidth, 38);
+    self.favBtn.backgroundColor = [UIColor colorWithRed:0.75 green:0.5 blue:0.1 alpha:1.0];
+    [self.favBtn setTitle:@"* FAVORITES" forState:UIControlStateNormal];
+    [self.favBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.favBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    self.favBtn.layer.cornerRadius = 8;
+    [self.favBtn addTarget:self action:@selector(favoritesTapped) forControlEvents:UIControlEventTouchUpInside];
+    [bottomBar addSubview:self.favBtn];
+
+    // Row 2: Start & Stop Spoofing
     self.startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.startBtn.frame = CGRectMake(16, 15, btnWidth, 48);
+    self.startBtn.frame = CGRectMake(14, 56, btnWidth, 48);
     self.startBtn.backgroundColor = [UIColor colorWithRed:0.12 green:0.75 blue:0.35 alpha:1.0];
     [self.startBtn setTitle:@"START SPOOF" forState:UIControlStateNormal];
     [self.startBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -228,7 +282,7 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     [bottomBar addSubview:self.startBtn];
 
     self.stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.stopBtn.frame = CGRectMake(16 + btnWidth + 16, 15, btnWidth, 48);
+    self.stopBtn.frame = CGRectMake(14 + btnWidth + 12, 56, btnWidth, 48);
     self.stopBtn.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
     [self.stopBtn setTitle:@"STOP NORMAL" forState:UIControlStateNormal];
     [self.stopBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -259,6 +313,11 @@ static double parseExpiryFromDict(NSDictionary *dict) {
         @"    window.webkit.messageHandlers.mapClick.postMessage({ lat: e.latLng.lat(), lng: e.latLng.lng() });"
         @"  });"
         @"}"
+        @"function setMapPos(lat, lng) {"
+        @"  var pos = { lat: lat, lng: lng };"
+        @"  marker.setPosition(pos);"
+        @"  map.panTo(pos);"
+        @"}"
         @"</script></head><body onload='init()'><div id='map'></div></body></html>",
         kGoogleMapsApiKey, targetLatitude, targetLongitude];
 
@@ -276,6 +335,98 @@ static double parseExpiryFromDict(NSDictionary *dict) {
             });
         }
     }
+}
+
+- (void)savePinTapped {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Save Coordinate"
+                                                                   message:@"Enter name and coordinates to save to Favorites"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"Spot Name (e.g. Zone 1)";
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"Latitude";
+        tf.text = [NSString stringWithFormat:@"%.6f", selectedLatitude];
+        tf.keyboardType = UIKeyboardTypeDecimalPad;
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"Longitude";
+        tf.text = [NSString stringWithFormat:@"%.6f", selectedLongitude];
+        tf.keyboardType = UIKeyboardTypeDecimalPad;
+    }];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+        NSString *name = alert.textFields[0].text;
+        if (name.length == 0) name = [NSString stringWithFormat:@"Spot #%lu", (unsigned long)[getSavedFavorites() count] + 1];
+        double lat = [alert.textFields[1].text doubleValue];
+        double lon = [alert.textFields[2].text doubleValue];
+
+        saveFavoriteCoordinate(name, lat, lon);
+
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Saved"
+                                                                      message:[NSString stringWithFormat:@"'%@' added to Favorites.", name]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)favoritesTapped {
+    NSArray *favs = getSavedFavorites();
+    if (favs.count == 0) {
+        UIAlertController *empty = [UIAlertController alertControllerWithTitle:@"No Favorites"
+                                                                       message:@"Tap '+ SAVE PIN' to save your first location."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [empty addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:empty animated:YES completion:nil];
+        return;
+    }
+
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Saved Favorites"
+                                                                   message:@"Select location to move and teleport:"
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+
+    for (NSInteger i = 0; i < favs.count; i++) {
+        NSDictionary *item = favs[i];
+        NSString *name = item[@"name"] ?: @"Spot";
+        double lat = [item[@"lat"] doubleValue];
+        double lon = [item[@"lon"] doubleValue];
+        NSString *title = [NSString stringWithFormat:@"%@ (%.4f, %.4f)", name, lat, lon];
+
+        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+            selectedLatitude = lat;
+            selectedLongitude = lon;
+            self.statusLabel.text = [NSString stringWithFormat:@"Selected: %.5f, %.5f", selectedLatitude, selectedLongitude];
+
+            NSString *js = [NSString stringWithFormat:@"setMapPos(%f, %f);", lat, lon];
+            [self.webView evaluateJavaScript:js completionHandler:nil];
+
+            UIAlertController *prompt = [UIAlertController alertControllerWithTitle:name
+                                                                            message:[NSString stringWithFormat:@"Lat: %.6f\nLon: %.6f", lat, lon]
+                                                                     preferredStyle:UIAlertControllerStyleAlert];
+            [prompt addAction:[UIAlertAction actionWithTitle:@"START SPOOF HERE" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+                [self startSpoofTapped];
+            }]];
+            [prompt addAction:[UIAlertAction actionWithTitle:@"Just Move Pin" style:UIAlertActionStyleCancel handler:nil]];
+            [self presentViewController:prompt animated:YES completion:nil];
+        }]];
+    }
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Clear All Favorites" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *act) {
+        clearAllFavorites();
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.view;
+        sheet.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width / 2, self.view.bounds.size.height - 100, 1, 1);
+    }
+
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)startSpoofTapped {
