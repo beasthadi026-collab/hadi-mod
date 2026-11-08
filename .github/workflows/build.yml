@@ -1,0 +1,33 @@
+name: Build iOS Tweak Dylib
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          brew install ldid xz
+
+      - name: Setup Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          git clone https://github.com/theos/sdks.git $HOME/theos/sdks
+
+      - name: Compile Tweak
+        run: |
+          export THEOS=$HOME/theos
+          make clean
+          make package FINALPACKAGE=1
+
+      - name: Upload Ready Dylib Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocationHook-Dylib
+          path: .theos/obj/debug/*.dylib
