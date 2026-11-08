@@ -186,8 +186,8 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     // Close Button
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(screenWidth - 44, 52, 36, 36);
-    [closeBtn setTitle:@"âœ•" forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+    [closeBtn setTitle:@"X" forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:18];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:closeBtn];
@@ -216,7 +216,7 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     self.startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.startBtn.frame = CGRectMake(16, 15, btnWidth, 48);
     self.startBtn.backgroundColor = [UIColor colorWithRed:0.12 green:0.75 blue:0.35 alpha:1.0];
-    [self.startBtn setTitle:@"â–¶ START SPOOF" forState:UIControlStateNormal];
+    [self.startBtn setTitle:@"START SPOOF" forState:UIControlStateNormal];
     [self.startBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.startBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     self.startBtn.layer.cornerRadius = 10;
@@ -226,7 +226,7 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     self.stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.stopBtn.frame = CGRectMake(16 + btnWidth + 16, 15, btnWidth, 48);
     self.stopBtn.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
-    [self.stopBtn setTitle:@"â¹ STOP NORMAL" forState:UIControlStateNormal];
+    [self.stopBtn setTitle:@"STOP NORMAL" forState:UIControlStateNormal];
     [self.stopBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.stopBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     self.stopBtn.layer.cornerRadius = 10;
@@ -289,7 +289,7 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     [defaults setBool:YES forKey:@"HadiMod_Enabled"];
     [defaults synchronize];
 
-    UIAlertController *toast = [UIAlertController alertControllerWithTitle:@"âœ… Spoofing Started"
+    UIAlertController *toast = [UIAlertController alertControllerWithTitle:@"Spoofing Started"
                                                                    message:[NSString stringWithFormat:@"Talabat Rider location moved to:\nLat: %.5f\nLon: %.5f", targetLatitude, targetLongitude]
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [toast addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -302,7 +302,7 @@ static double parseExpiryFromDict(NSDictionary *dict) {
     [defaults setBool:NO forKey:@"HadiMod_Enabled"];
     [defaults synchronize];
 
-    UIAlertController *toast = [UIAlertController alertControllerWithTitle:@"â¹ Spoofing Stopped"
+    UIAlertController *toast = [UIAlertController alertControllerWithTitle:@"Spoofing Stopped"
                                                                    message:@"Location reset to Real Original GPS."
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [toast addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -519,7 +519,7 @@ static void executeVpsLogin(NSString *username, NSString *password, UIViewContro
 
                 // Re-entering a banned code
                 if ([status isEqualToString:@"banned"]) {
-                    UIAlertController *failAlert = [UIAlertController alertControllerWithTitle:@"âŒ Account Banned"
+                    UIAlertController *failAlert = [UIAlertController alertControllerWithTitle:@"Account Banned"
                                                                                        message:@"Your account has been banned by administrator."
                                                                                 preferredStyle:UIAlertControllerStyleAlert];
                     [failAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -530,7 +530,7 @@ static void executeVpsLogin(NSString *username, NSString *password, UIViewContro
                 // Re-entering an expired code
                 double expiry = parseExpiryFromDict(customer);
                 if ([status isEqualToString:@"expired"] || (expiry > 0 && [[NSDate date] timeIntervalSince1970] > expiry)) {
-                    UIAlertController *failAlert = [UIAlertController alertControllerWithTitle:@"âŒ Subscription Expired"
+                    UIAlertController *failAlert = [UIAlertController alertControllerWithTitle:@"Subscription Expired"
                                                                                        message:@"Your code has expired. Please create a new code."
                                                                                 preferredStyle:UIAlertControllerStyleAlert];
                     [failAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -551,7 +551,7 @@ static void executeVpsLogin(NSString *username, NSString *password, UIViewContro
                 mapVC.modalPresentationStyle = UIModalPresentationFullScreen;
                 [presenter presentViewController:mapVC animated:YES completion:nil];
             } else {
-                UIAlertController *failAlert = [UIAlertController alertControllerWithTitle:@"âŒ Login Failed"
+                UIAlertController *failAlert = [UIAlertController alertControllerWithTitle:@"Login Failed"
                                                                                    message:error ? error.localizedDescription : errorMsg
                                                                             preferredStyle:UIAlertControllerStyleAlert];
                 [failAlert addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
