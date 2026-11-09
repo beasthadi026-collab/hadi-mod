@@ -1,10 +1,11 @@
 // Language: Objective-C (Logos)
 // Target: iOS 13.0 - 18.x (arm64 / arm64e)
-// Features: Dual Embedded Logos + Username & Password VPS Login + Heartbeat Session Validation + Ban/Delete Enforcement + Favorites + Save Pin
+// Features: Dual Embedded Logos + Username & Password VPS Login + Heartbeat Session Validation + Universal GPS Pulse Engine (Google Maps / Delivery Apps) + Favorites + Save Pin
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 
 // Global persistent state
 static BOOL g_spoofEnabled = NO;
@@ -13,8 +14,11 @@ static CLLocationDegrees g_spoofLongitude = 54.35718;
 static UIWindow *g_window = nil;
 static BOOL g_sessionWatcherRunning = NO;
 static dispatch_source_t g_sessionTimer = nil;
+static dispatch_source_t g_gpsPulseTimer = nil;
 static dispatch_once_t g_watcherOnceToken = 0;
 static dispatch_once_t g_windowOnceToken = 0;
+static NSHashTable *g_activeManagers = nil;
+static NSMutableSet *g_swizzledDelegateClasses = nil;
 
 static NSString * const kFavKey = @"HadiModSavedFavorites";
 static NSString * const kProjectSlug = @"hadi-gps-3";
@@ -42,6 +46,21 @@ static NSString *getOrCreateDeviceId() {
     return devId;
 }
 
+static CLLocation *createSpoofedLocation(void) {
+    CLLocationCoordinate2D coord = CLLocationCoordinate2DMake(g_spoofLatitude, g_spoofLongitude);
+    return [[CLLocation alloc] initWithCoordinate:coord
+                                         altitude:25.0
+                               horizontalAccuracy:5.0
+                                 verticalAccuracy:5.0
+                                           course:0.0
+                                            speed:0.0
+                                        timestamp:[NSDate date]];
+}
+
+static void triggerGlobalLocationUpdate(void);
+static void startGpsPulseTimer(void);
+static void stopGpsPulseTimer(void);
+
 // Forward Declarations
 @interface HadiModMapViewController : UIViewController <WKNavigationDelegate, WKScriptMessageHandler>
 @property (nonatomic, strong) WKWebView *webView;
@@ -60,11 +79,143 @@ static void stopSessionWatcher(void);
 static void showRevokedAlert(NSString *title, NSString *message);
 
 // ==========================================
+// UNIVERSAL CORE LOCATION ENGINE
+// (Intercepts CLLocation + CLLocationManager + Delegate Callbacks + Continuous 1Hz Pulse)
+// ==========================================
+
+%hook CLLocation
+
+- (CLLocationCoordinate2D)coordinate {
+    if (g_spoofEnabled) {
+        return CLLocationCoordinate2DMake(g_spoofLatitude, g_spoofLongitude);
+    }
+    return %orig;
+}
+
+%end
+
+static void swizzleDelegateIfNeeded(id delegate) {
+    if (!delegate) return;
+    Class delClass = [delegate class];
+    if (!g_swizzledDelegateClasses) {
+        g_swizzledDelegateClasses = [[NSMutableSet alloc] init];
+    }
+    
+    NSString *className = NSStringFromClass(delClass);
+    if ([g_swizzledDelegateClasses containsObject:className]) return;
+    [g_swizzledDelegateClasses addObject:className];
+    
+    SEL sel = @selector(locationManager:didUpdateLocations:);
+    Method method = class_getInstanceMethod(delClass, sel);
+    if (method) {
+        void (*origImp)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(method);
+        IMP newImp = imp_implementationWithBlock(^(id _self, CLLocationManager *mgr, NSArray<CLLocation *> *locations) {
+            if (g_spoofEnabled) {
+                CLLocation *fake = createSpoofedLocation();
+                origImp(_self, sel, mgr, @[fake]);
+            } else {
+                origImp(_self, sel, mgr, locations);
+            }
+        });
+        class_replaceMethod(delClass, sel, newImp, method_getTypeEncoding(method));
+    }
+}
+
+%hook CLLocationManager
+
+- (instancetype)init {
+    CLLocationManager *mgr = %orig;
+    if (!g_activeManagers) {
+        g_activeManagers = [NSHashTable weakObjectsHashTable];
+    }
+    [g_activeManagers addObject:mgr];
+    return mgr;
+}
+
+- (void)setDelegate:(id<CLLocationManagerDelegate>)delegate {
+    if (delegate) {
+        swizzleDelegateIfNeeded(delegate);
+    }
+    if (!g_activeManagers) {
+        g_activeManagers = [NSHashTable weakObjectsHashTable];
+    }
+    [g_activeManagers addObject:self];
+    %orig(delegate);
+}
+
+- (CLLocation *)location {
+    if (g_spoofEnabled) {
+        return createSpoofedLocation();
+    }
+    return %orig;
+}
+
+- (void)startUpdatingLocation {
+    %orig;
+    if (!g_activeManagers) {
+        g_activeManagers = [NSHashTable weakObjectsHashTable];
+    }
+    [g_activeManagers addObject:self];
+    if (g_spoofEnabled) {
+        CLLocation *fake = createSpoofedLocation();
+        if (self.delegate && [self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+            [self.delegate locationManager:self didUpdateLocations:@[fake]];
+        }
+    }
+}
+
+- (void)requestLocation {
+    if (g_spoofEnabled) {
+        CLLocation *fake = createSpoofedLocation();
+        if (self.delegate && [self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+            [self.delegate locationManager:self didUpdateLocations:@[fake]];
+            return;
+        }
+    }
+    %orig;
+}
+
+%end
+
+static void triggerGlobalLocationUpdate(void) {
+    if (!g_activeManagers) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CLLocation *fake = createSpoofedLocation();
+        for (CLLocationManager *mgr in [g_activeManagers allObjects]) {
+            if (mgr.delegate && [mgr.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+                [mgr.delegate locationManager:mgr didUpdateLocations:@[fake]];
+            }
+        }
+    });
+}
+
+static void startGpsPulseTimer(void) {
+    if (g_gpsPulseTimer) return;
+    dispatch_queue_t queue = dispatch_get_main_queue();
+    g_gpsPulseTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_set_timer(g_gpsPulseTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 0.1 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(g_gpsPulseTimer, ^{
+        if (g_spoofEnabled) {
+            triggerGlobalLocationUpdate();
+        }
+    });
+    dispatch_resume(g_gpsPulseTimer);
+}
+
+static void stopGpsPulseTimer(void) {
+    if (g_gpsPulseTimer) {
+        dispatch_source_cancel(g_gpsPulseTimer);
+        g_gpsPulseTimer = nil;
+    }
+}
+
+// ==========================================
 // SESSION TERMINATION & ALERT DISPATCH
 // ==========================================
 static void showRevokedAlert(NSString *title, NSString *message) {
     dispatch_async(dispatch_get_main_queue(), ^{
         g_spoofEnabled = NO;
+        stopGpsPulseTimer();
         NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
         [defs setBool:NO forKey:@"HadiMod_IsLoggedIn"];
         [defs removeObjectForKey:@"HadiMod_Token"];
@@ -164,35 +315,6 @@ static void stopSessionWatcher(void) {
         g_sessionWatcherRunning = NO;
     }
 }
-
-// ==========================================
-// CORE LOCATION HOOK
-// ==========================================
-%hook CLLocationManager
-
-- (CLLocation *)location {
-    if (g_spoofEnabled) {
-        CLLocationCoordinate2D coord = CLLocationCoordinate2DMake(g_spoofLatitude, g_spoofLongitude);
-        return [[CLLocation alloc] initWithCoordinate:coord
-                                             altitude:25.0
-                                   horizontalAccuracy:5.0
-                                     verticalAccuracy:5.0
-                                            timestamp:[NSDate date]];
-    }
-    return %orig;
-}
-
-- (void)startUpdatingLocation {
-    %orig;
-    if (g_spoofEnabled) {
-        CLLocation *fake = [self location];
-        if (self.delegate && [self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-            [self.delegate locationManager:self didUpdateLocations:@[fake]];
-        }
-    }
-}
-
-%end
 
 // ==========================================
 // MAP VIEW CONTROLLER (WKWebView Google Maps + Dual Logos + Favorites)
@@ -306,9 +428,9 @@ static void stopSessionWatcher(void) {
     // Row 2: [START SPOOF] and [STOP NORMAL]
     self.btnSpoof = [UIButton buttonWithType:UIButtonTypeCustom];
     self.btnSpoof.frame = CGRectMake(12, 62, btnW, 48);
-    self.btnSpoof.backgroundColor = [UIColor colorWithRed:0.15 green:0.68 blue:0.38 alpha:1.0];
+    self.btnSpoof.backgroundColor = g_spoofEnabled ? [UIColor colorWithRed:0.08 green:0.45 blue:0.25 alpha:1.0] : [UIColor colorWithRed:0.15 green:0.68 blue:0.38 alpha:1.0];
     self.btnSpoof.layer.cornerRadius = 10;
-    [self.btnSpoof setTitle:@"START SPOOF" forState:UIControlStateNormal];
+    [self.btnSpoof setTitle:g_spoofEnabled ? @"SPOOF ACTIVE" : @"START SPOOF" forState:UIControlStateNormal];
     [self.btnSpoof setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.btnSpoof.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [self.btnSpoof addTarget:self action:@selector(startSpoofTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -316,9 +438,9 @@ static void stopSessionWatcher(void) {
     
     self.btnNormal = [UIButton buttonWithType:UIButtonTypeCustom];
     self.btnNormal.frame = CGRectMake(self.view.bounds.size.width - 12 - btnW, 62, btnW, 48);
-    self.btnNormal.backgroundColor = [UIColor colorWithRed:0.85 green:0.22 blue:0.22 alpha:1.0];
+    self.btnNormal.backgroundColor = g_spoofEnabled ? [UIColor colorWithRed:0.85 green:0.22 blue:0.22 alpha:1.0] : [UIColor colorWithRed:0.5 green:0.15 blue:0.15 alpha:1.0];
     self.btnNormal.layer.cornerRadius = 10;
-    [self.btnNormal setTitle:@"STOP NORMAL" forState:UIControlStateNormal];
+    [self.btnNormal setTitle:g_spoofEnabled ? @"STOP NORMAL" : @"NORMAL ACTIVE" forState:UIControlStateNormal];
     [self.btnNormal setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.btnNormal.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [self.btnNormal addTarget:self action:@selector(stopNormalTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -374,6 +496,9 @@ static void stopSessionWatcher(void) {
             g_spoofLatitude = [lat doubleValue];
             g_spoofLongitude = [lng doubleValue];
             self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f, Lon: %.5f", g_spoofLatitude, g_spoofLongitude];
+            if (g_spoofEnabled) {
+                triggerGlobalLocationUpdate();
+            }
         }
     }
 }
@@ -440,6 +565,9 @@ static void stopSessionWatcher(void) {
             self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f, Lon: %.5f", lat, lng];
             NSString *js = [NSString stringWithFormat:@"setMapPos(%f, %f);", lat, lng];
             [self.webView evaluateJavaScript:js completionHandler:nil];
+            if (g_spoofEnabled) {
+                triggerGlobalLocationUpdate();
+            }
             
             UIAlertController *prompt = [UIAlertController alertControllerWithTitle:pin[@"name"] message:@"Map centered on coordinate. Start spoofing here?" preferredStyle:UIAlertControllerStyleAlert];
             [prompt addAction:[UIAlertAction actionWithTitle:@"START SPOOF HERE" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
@@ -460,14 +588,25 @@ static void stopSessionWatcher(void) {
     [self.btnSpoof setTitle:@"SPOOF ACTIVE" forState:UIControlStateNormal];
     self.btnNormal.backgroundColor = [UIColor colorWithRed:0.85 green:0.22 blue:0.22 alpha:1.0];
     [self.btnNormal setTitle:@"STOP NORMAL" forState:UIControlStateNormal];
+    
+    startGpsPulseTimer();
+    triggerGlobalLocationUpdate();
 }
 
 - (void)stopNormalTapped {
     g_spoofEnabled = NO;
+    stopGpsPulseTimer();
     self.btnSpoof.backgroundColor = [UIColor colorWithRed:0.15 green:0.68 blue:0.38 alpha:1.0];
     [self.btnSpoof setTitle:@"START SPOOF" forState:UIControlStateNormal];
     self.btnNormal.backgroundColor = [UIColor colorWithRed:0.5 green:0.15 blue:0.15 alpha:1.0];
     [self.btnNormal setTitle:@"NORMAL ACTIVE" forState:UIControlStateNormal];
+    
+    // Trigger update with real hardware location
+    if (g_activeManagers) {
+        for (CLLocationManager *mgr in [g_activeManagers allObjects]) {
+            [mgr startUpdatingLocation];
+        }
+    }
 }
 
 - (void)closeTapped {
