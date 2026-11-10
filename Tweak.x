@@ -87,6 +87,10 @@ static void executeLogin(NSString *user, NSString *pass);
 static void startSessionWatcher(void);
 static void stopSessionWatcher(void);
 static void showRevokedAlert(NSString *title, NSString *message);
+static double parseExpiryFromObject(id obj);
+static double extractExpiryFromJSON(NSDictionary *json);
+static BOOL isJsonExplicitlyExpired(NSDictionary *json);
+static BOOL isCurrentSessionExpired(void);
 
 // ==========================================
 // UNIVERSAL CORE LOCATION ENGINE
@@ -206,6 +210,10 @@ static void startGpsPulseTimer(void) {
     dispatch_source_set_timer(g_gpsPulseTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 0.1 * NSEC_PER_SEC);
     dispatch_source_set_event_handler(g_gpsPulseTimer, ^{
         if (g_spoofEnabled) {
+            if (isCurrentSessionExpired()) {
+                showRevokedAlert(@"Subscription Expired", @"Your subscription period has ended. Auto logged out.");
+                return;
+            }
             triggerGlobalLocationUpdate();
         }
     });
@@ -220,19 +228,120 @@ static void stopGpsPulseTimer(void) {
 }
 
 // ==========================================
-// SESSION TERMINATION & ALERT DISPATCH
+// EXPIRATION PARSER & AUTO-LOGOUT ENGINE
+// ==========================================
+static double parseExpiryFromObject(id obj) {
+    if (!obj || obj == (id)[NSNull null]) return 0.0;
+    
+    if ([obj isKindOfClass:[NSNumber class]]) {
+        double val = [(NSNumber *)obj doubleValue];
+        if (val > 10000000000.0) val /= 1000.0;
+        return val;
+    }
+    
+    if ([obj isKindOfClass:[NSString class]]) {
+        NSString *str = [(NSString *)obj stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (str.length == 0 || [str caseInsensitiveCompare:@"null"] == NSOrderedSame || [str caseInsensitiveCompare:@"unlimited"] == NSOrderedSame) {
+            return 0.0;
+        }
+        
+        NSScanner *scanner = [NSScanner scannerWithString:str];
+        double numVal = 0;
+        if ([scanner scanDouble:&numVal] && [scanner isAtEnd]) {
+            if (numVal > 10000000000.0) numVal /= 1000.0;
+            return numVal;
+        }
+        
+        NSArray<NSString *> *formats = @[
+            @"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            @"yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            @"yyyy-MM-dd'T'HH:mm:ss.SSS",
+            @"yyyy-MM-dd'T'HH:mm:ss'Z'",
+            @"yyyy-MM-dd'T'HH:mm:ssZ",
+            @"yyyy-MM-dd'T'HH:mm:ss",
+            @"yyyy-MM-dd HH:mm:ss",
+            @"yyyy-MM-dd"
+        ];
+        
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        df.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+        df.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"UTC"];
+        
+        for (NSString *fmt in formats) {
+            [df setDateFormat:fmt];
+            NSDate *d = [df dateFromString:str];
+            if (d) return [d timeIntervalSince1970];
+        }
+    }
+    return 0.0;
+}
+
+static double extractExpiryFromJSON(NSDictionary *json) {
+    if (!json || ![json isKindOfClass:[NSDictionary class]]) return 0.0;
+    NSArray *keys = @[@"expiresAt", @"expiry", @"expiryDate", @"expiry_date", @"valid_until", @"expires_at"];
+    for (NSString *k in keys) {
+        if (json[k] && json[k] != [NSNull null]) {
+            double exp = parseExpiryFromObject(json[k]);
+            if (exp > 0.0) return exp;
+        }
+    }
+    id cust = json[@"customer"] ?: json[@"user"] ?: json[@"data"];
+    if (cust && [cust isKindOfClass:[NSDictionary class]]) {
+        for (NSString *k in keys) {
+            if (cust[k] && cust[k] != [NSNull null]) {
+                double exp = parseExpiryFromObject(cust[k]);
+                if (exp > 0.0) return exp;
+            }
+        }
+    }
+    return 0.0;
+}
+
+static BOOL isJsonExplicitlyExpired(NSDictionary *json) {
+    if (!json || ![json isKindOfClass:[NSDictionary class]]) return NO;
+    id cust = json[@"customer"] ?: json[@"user"] ?: json[@"data"];
+    NSArray *dicts = cust && [cust isKindOfClass:[NSDictionary class]] ? @[json, cust] : @[json];
+    for (NSDictionary *d in dicts) {
+        if ([d[@"expired"] boolValue] || [d[@"isExpired"] boolValue]) return YES;
+        NSString *status = [NSString stringWithFormat:@"%@", d[@"status"] ?: @""];
+        if ([status caseInsensitiveCompare:@"expired"] == NSOrderedSame) return YES;
+        if ([status caseInsensitiveCompare:@"banned"] == NSOrderedSame) return YES;
+        if (d[@"active"] && ![d[@"active"] boolValue]) return YES;
+        if (d[@"banned"] && [d[@"banned"] boolValue]) return YES;
+    }
+    return NO;
+}
+
+static BOOL isCurrentSessionExpired(void) {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    BOOL loggedIn = [defs boolForKey:@"HadiMod_IsLoggedIn"];
+    NSString *token = [defs stringForKey:@"HadiMod_Token"];
+    if (!loggedIn || !token || token.length == 0) return YES;
+    
+    double expiry = [defs doubleForKey:@"HadiMod_Expiry"];
+    if (expiry > 0.0) {
+        double now = [[NSDate date] timeIntervalSince1970];
+        if (now >= expiry) return YES;
+    }
+    return NO;
+}
+
+// ==========================================
+// SESSION TERMINATION & AUTO-LOGOUT DISPATCH
 // ==========================================
 static void showRevokedAlert(NSString *title, NSString *message) {
     dispatch_async(dispatch_get_main_queue(), ^{
         g_spoofEnabled = NO;
         stopGpsPulseTimer();
+        stopSessionWatcher();
+        
         NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
         [defs setBool:NO forKey:@"HadiMod_IsLoggedIn"];
         [defs setBool:NO forKey:kSpoofEnabledKey];
         [defs removeObjectForKey:@"HadiMod_Token"];
         [defs removeObjectForKey:@"HadiMod_Expiry"];
+        [defs removeObjectForKey:@"HadiMod_Username"];
         [defs synchronize];
-        stopSessionWatcher();
         
         UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
         while (rootVC.presentedViewController) {
@@ -245,7 +354,10 @@ static void showRevokedAlert(NSString *title, NSString *message) {
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
                                                                                message:message
                                                                         preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDestructive handler:nil]];
+                [alert addAction:[UIAlertAction actionWithTitle:@"Login" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                    showLoginDialog();
+                }]];
+                [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
                 [presenting presentViewController:alert animated:YES completion:nil];
             }];
             return;
@@ -254,75 +366,89 @@ static void showRevokedAlert(NSString *title, NSString *message) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
                                                                        message:message
                                                                 preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDestructive handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Login" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            showLoginDialog();
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
         [rootVC presentViewController:alert animated:YES completion:nil];
     });
 }
 
-// Background Heartbeat: Check /auth/customer/me every 10 seconds
+// Background Heartbeat: Check expiration locally and verify with VPS
 static void startSessionWatcher(void) {
-    dispatch_once(&g_watcherOnceToken, ^{
-        dispatch_queue_t queue = dispatch_queue_create("net.hadimod3.sessionwatcher", DISPATCH_QUEUE_SERIAL);
-        g_sessionTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
-        dispatch_source_set_timer(g_sessionTimer, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(g_sessionTimer, ^{
-            NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:@"HadiMod_Token"];
-            if (!token || token.length == 0) {
-                return;
-            }
+    if (g_sessionWatcherRunning) return;
+    dispatch_queue_t queue = dispatch_queue_create("net.hadimod3.sessionwatcher", DISPATCH_QUEUE_SERIAL);
+    g_sessionTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_set_timer(g_sessionTimer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 5 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(g_sessionTimer, ^{
+        if (isCurrentSessionExpired()) {
+            showRevokedAlert(@"Subscription Expired", @"Your subscription period has ended. Auto logged out.");
+            return;
+        }
+        
+        NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:@"HadiMod_Token"];
+        if (!token || token.length == 0) {
+            return;
+        }
+        
+        NSURL *url = [NSURL URLWithString:@"https://api.hadimod3.net/auth/customer/me"];
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+        [req setHTTPMethod:@"GET"];
+        [req setValue:[NSString stringWithFormat:@"Bearer %@", token] forHTTPHeaderField:@"Authorization"];
+        [req setValue:kProjectSlug forHTTPHeaderField:@"x-project"];
+        [req setValue:getOrCreateDeviceId() forHTTPHeaderField:@"x-device-id"];
+        [req setTimeoutInterval:5.0];
+        
+        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+            NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
+            NSInteger statusCode = httpResp.statusCode;
             
-            NSURL *url = [NSURL URLWithString:@"https://api.hadimod3.net/auth/customer/me"];
-            NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-            [req setHTTPMethod:@"GET"];
-            [req setValue:[NSString stringWithFormat:@"Bearer %@", token] forHTTPHeaderField:@"Authorization"];
-            [req setValue:kProjectSlug forHTTPHeaderField:@"x-project"];
-            [req setValue:getOrCreateDeviceId() forHTTPHeaderField:@"x-device-id"];
-            [req setTimeoutInterval:7.0];
-            
-            NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-                NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
-                NSInteger statusCode = httpResp.statusCode;
-                
-                if (statusCode == 401 || statusCode == 403 || statusCode == 404) {
-                    NSString *reason = @"Session Revoked";
-                    NSString *detail = @"Your account access has been terminated by administrator.";
-                    if (data) {
-                        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-                        NSString *msg = json[@"message"];
-                        if (msg && [msg localizedCaseInsensitiveContainsString:@"ban"]) {
-                            reason = @"Account Banned";
-                            detail = @"Your account has been banned by administrator.";
-                        } else if (msg && [msg localizedCaseInsensitiveContainsString:@"expire"]) {
-                            reason = @"Subscription Expired";
-                            detail = @"Your subscription period has ended. Please generate a new key.";
-                        } else if (msg && [msg localizedCaseInsensitiveContainsString:@"delete"]) {
-                            reason = @"Account Terminated";
-                            detail = @"Your account was deleted by administrator.";
-                        }
-                    }
-                    showRevokedAlert(reason, detail);
-                } else if (statusCode == 200 && data) {
+            if (statusCode == 401 || statusCode == 403 || statusCode == 404) {
+                NSString *reason = @"Subscription Expired";
+                NSString *detail = @"Your account credentials or subscription have expired. Auto logged out.";
+                if (data) {
                     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-                    NSNumber *active = json[@"active"];
-                    NSNumber *isBanned = json[@"banned"];
-                    NSString *status = json[@"status"];
-                    if ((active && ![active boolValue]) || (isBanned && [isBanned boolValue]) || [status isEqualToString:@"banned"]) {
-                        showRevokedAlert(@"Account Banned", @"Your account has been suspended or banned by administrator.");
+                    NSString *msg = json[@"message"];
+                    if (msg && [msg localizedCaseInsensitiveContainsString:@"ban"]) {
+                        reason = @"Account Banned";
+                        detail = @"Your account has been banned by administrator.";
+                    } else if (msg && ([msg localizedCaseInsensitiveContainsString:@"expire"] || [msg localizedCaseInsensitiveContainsString:@"ended"])) {
+                        reason = @"Subscription Expired";
+                        detail = @"Your subscription period has ended. Please renew.";
+                    } else if (msg && [msg localizedCaseInsensitiveContainsString:@"delete"]) {
+                        reason = @"Account Terminated";
+                        detail = @"Your account was deleted by administrator.";
                     }
                 }
-            }];
-            [task resume];
-        });
-        dispatch_resume(g_sessionTimer);
-        g_sessionWatcherRunning = YES;
+                showRevokedAlert(reason, detail);
+            } else if (statusCode == 200 && data) {
+                NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if (isJsonExplicitlyExpired(json)) {
+                    showRevokedAlert(@"Subscription Expired", @"Your subscription has expired or been deactivated. Auto logged out.");
+                    return;
+                }
+                double serverExpiry = extractExpiryFromJSON(json);
+                if (serverExpiry > 0.0) {
+                    double now = [[NSDate date] timeIntervalSince1970];
+                    if (now >= serverExpiry) {
+                        showRevokedAlert(@"Subscription Expired", @"Your subscription period has ended. Auto logged out.");
+                        return;
+                    }
+                    [[NSUserDefaults standardUserDefaults] setDouble:serverExpiry forKey:@"HadiMod_Expiry"];
+                    [[NSUserDefaults standardUserDefaults] synchronize];
+                }
+            }
+        }];
+        [task resume];
     });
+    dispatch_resume(g_sessionTimer);
+    g_sessionWatcherRunning = YES;
 }
 
 static void stopSessionWatcher(void) {
     if (g_sessionTimer) {
         dispatch_source_cancel(g_sessionTimer);
         g_sessionTimer = nil;
-        g_watcherOnceToken = 0;
         g_sessionWatcherRunning = NO;
     }
 }
@@ -898,13 +1024,20 @@ static void executeLogin(NSString *user, NSString *pass) {
                     [defs setObject:token forKey:@"HadiMod_Token"];
                     [defs setObject:user forKey:@"HadiMod_Username"];
                     
-                    double expiry = 0.0;
-                    if (json[@"expiresAt"]) {
-                        expiry = [json[@"expiresAt"] doubleValue];
-                    } else if (json[@"customer"] && json[@"customer"][@"expiresAt"]) {
-                        expiry = [json[@"customer"][@"expiresAt"] doubleValue];
+                    double expiry = extractExpiryFromJSON(json);
+                    if (isJsonExplicitlyExpired(json) || (expiry > 0.0 && [[NSDate date] timeIntervalSince1970] >= expiry)) {
+                        UIAlertController *expAlert = [UIAlertController alertControllerWithTitle:@"Account Expired"
+                                                                                          message:@"Your account subscription has already expired. Please renew."
+                                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                        [expAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                        [root presentViewController:expAlert animated:YES completion:nil];
+                        return;
                     }
-                    if (expiry > 0) [defs setDouble:expiry forKey:@"HadiMod_Expiry"];
+                    if (expiry > 0.0) {
+                        [defs setDouble:expiry forKey:@"HadiMod_Expiry"];
+                    } else {
+                        [defs removeObjectForKey:@"HadiMod_Expiry"];
+                    }
                     [defs synchronize];
                     
                     startSessionWatcher();
@@ -1017,15 +1150,14 @@ static void showLoginDialog(void) {
 %new
 - (void)hadiModGestureTriggered:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateEnded) {
+        if (isCurrentSessionExpired()) {
+            showRevokedAlert(@"Subscription Expired", @"Your subscription period has ended. Auto logged out.");
+            return;
+        }
+        
         NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
         BOOL loggedIn = [defs boolForKey:@"HadiMod_IsLoggedIn"];
         NSString *token = [defs stringForKey:@"HadiMod_Token"];
-        
-        double expiry = [defs doubleForKey:@"HadiMod_Expiry"];
-        if (expiry > 0 && [[NSDate date] timeIntervalSince1970] > expiry) {
-            showRevokedAlert(@"Subscription Expired", @"Your subscription period has ended. Please renew your account.");
-            return;
-        }
         
         if (loggedIn && token && token.length > 0) {
             UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
@@ -1060,7 +1192,22 @@ static void showLoginDialog(void) {
         g_spoofLongitude = savedLon;
     }
     
-    // Check if user was logged in and spoof was active before app quit
+    // Auto-Logout if subscription or credentials have expired
+    if (isCurrentSessionExpired()) {
+        g_spoofEnabled = NO;
+        [defs setBool:NO forKey:@"HadiMod_IsLoggedIn"];
+        [defs setBool:NO forKey:kSpoofEnabledKey];
+        [defs removeObjectForKey:@"HadiMod_Token"];
+        [defs removeObjectForKey:@"HadiMod_Expiry"];
+        [defs removeObjectForKey:@"HadiMod_Username"];
+        [defs synchronize];
+        return;
+    }
+    
+    // Start session watcher immediately on app load
+    startSessionWatcher();
+    
+    // Restore spoofing only if session is active and not expired
     BOOL wasSpoofActive = [defs boolForKey:kSpoofEnabledKey];
     BOOL isLoggedIn = [defs boolForKey:@"HadiMod_IsLoggedIn"];
     NSString *token = [defs stringForKey:@"HadiMod_Token"];
