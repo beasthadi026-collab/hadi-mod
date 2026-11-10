@@ -340,18 +340,18 @@ static void stopSessionWatcher(void) {
     self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:1.0];
     _isFetchingTalabat = NO;
     
-    // Top Bar Container (Height 116 to fit double-size 76x76 logos)
-    CGFloat topBarH = 116.0;
+    // Top Bar Container (Height 138 to clear iPhone camera notch/Dynamic Island)
+    CGFloat topBarH = 138.0;
     UIView *topBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, topBarH)];
     topBar.backgroundColor = [UIColor colorWithRed:0.11 green:0.12 blue:0.15 alpha:1.0];
     topBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:topBar];
     
-    // Left Circular Logo: Hadi Mod (Size 76x76, Double size)
-    CGFloat logoSize = 76.0;
+    // Left Circular Logo: Hadi Mod (Size 72x72, lowered to clear camera)
+    CGFloat logoSize = 72.0;
     UIImage *imgHadi = getImageFromBase64(kLogoHadiModBase64);
     if (imgHadi) {
-        UIImageView *ivHadi = [[UIImageView alloc] initWithFrame:CGRectMake(12, 30, logoSize, logoSize)];
+        UIImageView *ivHadi = [[UIImageView alloc] initWithFrame:CGRectMake(12, 52, logoSize, logoSize)];
         ivHadi.image = imgHadi;
         ivHadi.contentMode = UIViewContentModeScaleAspectFill;
         ivHadi.layer.cornerRadius = logoSize / 2.0;
@@ -361,10 +361,10 @@ static void stopSessionWatcher(void) {
         [topBar addSubview:ivHadi];
     }
     
-    // Right Circular Logo: Error Expert (Size 76x76, Double size)
+    // Right Circular Logo: Error Expert (Size 72x72, fully symmetrical on right side)
     UIImage *imgError = getImageFromBase64(kLogoErrorExpertBase64);
     if (imgError) {
-        UIImageView *ivError = [[UIImageView alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - logoSize - 44, 30, logoSize, logoSize)];
+        UIImageView *ivError = [[UIImageView alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - 12 - logoSize, 52, logoSize, logoSize)];
         ivError.image = imgError;
         ivError.contentMode = UIViewContentModeScaleAspectFill;
         ivError.layer.cornerRadius = logoSize / 2.0;
@@ -375,33 +375,24 @@ static void stopSessionWatcher(void) {
         [topBar addSubview:ivError];
     }
     
-    // Close "X" Button
-    UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeCustom];
-    btnClose.frame = CGRectMake(self.view.bounds.size.width - 38, 34, 32, 32);
-    [btnClose setTitle:@"X" forState:UIControlStateNormal];
-    [btnClose setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    btnClose.titleLabel.font = [UIFont boldSystemFontOfSize:18];
-    btnClose.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [btnClose addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-    [topBar addSubview:btnClose];
-    
-    // Header Title & Coordinates (Centered between the two double-size logos)
-    CGFloat centerW = self.view.bounds.size.width - (logoSize * 2) - 64;
-    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(logoSize + 18, 38, centerW, 28)];
+    // Header Title & Coordinates (Centered, lowered below iPhone camera, larger bold text)
+    CGFloat centerW = self.view.bounds.size.width - 176;
+    CGFloat centerX = 88;
+    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(centerX, 58, centerW, 26)];
     self.titleLabel.text = @"HADI MOD X ERROR EXPERT";
     self.titleLabel.textColor = [UIColor whiteColor];
-    self.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     self.titleLabel.adjustsFontSizeToFitWidth = YES;
-    self.titleLabel.minimumScaleFactor = 0.7;
+    self.titleLabel.minimumScaleFactor = 0.75;
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [topBar addSubview:self.titleLabel];
     
-    self.coordsLabel = [[UILabel alloc] initWithFrame:CGRectMake(logoSize + 18, 68, centerW, 24)];
+    self.coordsLabel = [[UILabel alloc] initWithFrame:CGRectMake(centerX, 86, centerW, 36)];
     self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f\nLon: %.5f", g_spoofLatitude, g_spoofLongitude];
     self.coordsLabel.numberOfLines = 2;
-    self.coordsLabel.textColor = [UIColor colorWithRed:1.0 green:0.8 blue:0.2 alpha:1.0];
-    self.coordsLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+    self.coordsLabel.textColor = [UIColor colorWithRed:1.0 green:0.82 blue:0.2 alpha:1.0];
+    self.coordsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     self.coordsLabel.textAlignment = NSTextAlignmentCenter;
     self.coordsLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [topBar addSubview:self.coordsLabel];
@@ -478,6 +469,21 @@ static void stopSessionWatcher(void) {
     self.btnTalabat.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [self.btnTalabat addTarget:self action:@selector(fetchTalabatRestaurants) forControlEvents:UIControlEventTouchUpInside];
     [bottomBar addSubview:self.btnTalabat];
+    
+    // Bottom-Right Floating Close 'X' Button
+    UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeCustom];
+    btnClose.frame = CGRectMake(self.view.bounds.size.width - 56, self.view.bounds.size.height - bottomH - 58, 46, 46);
+    btnClose.backgroundColor = [UIColor colorWithRed:0.85 green:0.18 blue:0.18 alpha:0.95];
+    btnClose.layer.cornerRadius = 23;
+    btnClose.layer.masksToBounds = YES;
+    btnClose.layer.borderWidth = 2.0;
+    btnClose.layer.borderColor = [UIColor whiteColor].CGColor;
+    [btnClose setTitle:@"X" forState:UIControlStateNormal];
+    [btnClose setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    btnClose.titleLabel.font = [UIFont boldSystemFontOfSize:22];
+    btnClose.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
+    [btnClose addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:btnClose];
     
     [self loadGoogleMap];
     
@@ -674,11 +680,15 @@ static void stopSessionWatcher(void) {
     "    var info = new google.maps.InfoWindow({"
     "      content: '<div style=\"color:#000;font-weight:bold;font-size:12px;padding:4px;\">' + r.name + '</div>'"
     "    });"
-    "    (function(mk, inf) {"
+    "    (function(mk, inf, rLat, rLng) {"
     "      mk.addListener('click', function() {"
+    "        var p = {lat: rLat, lng: rLng};"
+    "        if (marker) { marker.setPosition(p); }"
+    "        map.panTo(p);"
+    "        notify(rLat, rLng);"
     "        inf.open(map, mk);"
     "      });"
-    "    })(m, info);"
+    "    })(m, info, r.lat, r.lon);"
     "    window.talabatMarkers.push(m);"
     "  }"
     "}"
