@@ -1,98 +1,41 @@
-// Language: Objective-C (Logos)
+// Language: Objective-C
 // Target: iOS 13.0 - 18.x (arm64 / arm64e)
-// Features: Pure Direct CoreLocation Hook + Sideload Receipt Bypass + Leaflet Map View + Talabat Restaurant Scanner (Zero Auth / Zero VPS / Zero Network Blocks)
+// Features: Full Working Architecture (CLLocationManager Swizzling + CLDelegateProxy + MKUserLocation Swizzling + Native Sideload Receipt Bypass + Leaflet Map)
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
+#import <MapKit/MapKit.h>
 #import <WebKit/WebKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
-// Global persistent state
+// Global State
 static BOOL g_spoofEnabled = NO;
 static CLLocationDegrees g_spoofLatitude = 24.46094;
 static CLLocationDegrees g_spoofLongitude = 54.35718;
-static dispatch_source_t g_gpsPulseTimer = nil;
-static dispatch_once_t g_windowOnceToken = 0;
 static NSHashTable *g_activeManagers = nil;
+static dispatch_source_t g_pulseTimer = nil;
+static dispatch_once_t g_windowOnceToken = 0;
 
 static NSString * const kFavKey = @"HadiModSavedFavorites";
-
-// Persistent Location Keys
 static NSString * const kSpoofEnabledKey = @"HadiMod_SpoofEnabled";
 static NSString * const kSpoofLatKey     = @"HadiMod_SpoofLatitude";
 static NSString * const kSpoofLonKey     = @"HadiMod_SpoofLongitude";
 
-// Forward Declarations
-@interface HadiModMapViewController : UIViewController <WKNavigationDelegate, WKScriptMessageHandler>
-@property (nonatomic, strong) WKWebView *webView;
-@property (nonatomic, strong) UILabel *titleLabel;
-@property (nonatomic, strong) UILabel *coordsLabel;
-@property (nonatomic, strong) UIButton *btnSpoof;
-@property (nonatomic, strong) UIButton *btnNormal;
-@property (nonatomic, strong) UIButton *btnSave;
-@property (nonatomic, strong) UIButton *btnFav;
-@property (nonatomic, strong) UIButton *btnTalabat;
-- (void)startSpoofTapped;
-- (void)fetchTalabatRestaurants;
-- (void)showToast:(NSString *)msg;
-@end
-
-static CLLocation *createSpoofedLocation(void);
-static void triggerGlobalLocationUpdate(void);
-static void startGpsPulseTimer(void);
-static void stopGpsPulseTimer(void);
+// Forward declarations
+static CLLocation *getFreshOverrideLocation(void);
+static void triggerLocationBroadcast(void);
+static void startPulseTimer(void);
+static void stopPulseTimer(void);
 
 // ==========================================
-// SIDELOAD & RECEIPT VALIDATION BYPASS
+// 1. FRESH OVERRIDE LOCATION BUILDER
 // ==========================================
-@interface HadiSideloadBypass : NSObject
-+ (void)installBypass;
-@end
-
-@implementation HadiSideloadBypass
-
-+ (void)installBypass {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        Class bundleClass = [NSBundle class];
-        SEL origSel = @selector(appStoreReceiptURL);
-        Method origMethod = class_getInstanceMethod(bundleClass, origSel);
-        if (origMethod) {
-            NSURL* (*origImp)(id, SEL) = (NSURL* (*)(id, SEL))method_getImplementation(origMethod);
-            IMP newImp = imp_implementationWithBlock(^NSURL*(id selfObj) {
-                NSURL *realURL = origImp(selfObj, origSel);
-                if (realURL && [[NSFileManager defaultManager] fileExistsAtPath:[realURL path]]) {
-                    return realURL;
-                }
-                NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
-                NSString *appSupport = paths.firstObject;
-                if (appSupport) {
-                    NSString *receiptDir = [appSupport stringByAppendingPathComponent:@"StoreKit"];
-                    [[NSFileManager defaultManager] createDirectoryAtPath:receiptDir withIntermediateDirectories:YES attributes:nil error:nil];
-                    NSString *receiptPath = [receiptDir stringByAppendingPathComponent:@"receipt"];
-                    if (![[NSFileManager defaultManager] fileExistsAtPath:receiptPath]) {
-                        NSData *dummyReceipt = [@"VALID_RECEIPT_OK" dataUsingEncoding:NSUTF8StringEncoding];
-                        [dummyReceipt writeToFile:receiptPath atomically:YES];
-                    }
-                    return [NSURL fileURLWithPath:receiptPath];
-                }
-                return realURL;
-            });
-            class_replaceMethod(bundleClass, origSel, newImp, method_getTypeEncoding(origMethod));
-        }
-    });
-}
-
-@end
-
-// ==========================================
-// CORE LOCATION SPOOF ENGINE
-// ==========================================
-static CLLocation *createSpoofedLocation(void) {
+static CLLocation *getFreshOverrideLocation(void) {
     CLLocationCoordinate2D coord = CLLocationCoordinate2DMake(g_spoofLatitude, g_spoofLongitude);
     return [[CLLocation alloc] initWithCoordinate:coord
-                                         altitude:25.0
+                                         altitude:30.0
                                horizontalAccuracy:5.0
                                  verticalAccuracy:5.0
                                            course:0.0
@@ -100,17 +43,75 @@ static CLLocation *createSpoofedLocation(void) {
                                         timestamp:[NSDate date]];
 }
 
-// Transparent Delegate Proxy that preserves original delegate
-@interface HadiLocationDelegateProxy : NSProxy <CLLocationManagerDelegate>
-@property (nonatomic, weak) id originalDelegate;
-@property (nonatomic, weak) CLLocationManager *manager;
-- (instancetype)initWithOriginalDelegate:(id)delegate manager:(CLLocationManager *)mgr;
+// ==========================================
+// 2. NATIVE SIDELOAD RECEIPT BYPASS (AYMAN Pattern)
+// Bypasses AppStore receipt check during Talabat authentication
+// ==========================================
+@interface AYMANSideloadBypass : NSObject
 @end
 
-@implementation HadiLocationDelegateProxy
+@implementation AYMANSideloadBypass
 
-- (instancetype)initWithOriginalDelegate:(id)delegate manager:(CLLocationManager *)mgr {
-    _originalDelegate = delegate;
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class cls = [NSBundle class];
+        SEL origSel = @selector(appStoreReceiptURL);
+        SEL swizSel = @selector(swizzled_appStoreReceiptURL);
+        
+        Method origMethod = class_getInstanceMethod(cls, origSel);
+        Method swizMethod = class_getInstanceMethod([self class], swizSel);
+        
+        if (origMethod && swizMethod) {
+            BOOL didAdd = class_addMethod(cls, swizSel, method_getImplementation(swizMethod), method_getTypeEncoding(swizMethod));
+            if (didAdd) {
+                Method newSwiz = class_getInstanceMethod(cls, swizSel);
+                method_exchangeImplementations(origMethod, newSwiz);
+            } else {
+                method_exchangeImplementations(origMethod, swizMethod);
+            }
+        }
+    });
+}
+
+- (NSURL *)swizzled_appStoreReceiptURL {
+    NSURL *url = [self swizzled_appStoreReceiptURL];
+    if (url && [[NSFileManager defaultManager] fileExistsAtPath:[url path]]) {
+        return url;
+    }
+    
+    // Provide a valid sandbox receipt container
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+    NSString *appSupport = paths.firstObject;
+    if (appSupport) {
+        NSString *storeKit = [appSupport stringByAppendingPathComponent:@"StoreKit"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:storeKit withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *receiptPath = [storeKit stringByAppendingPathComponent:@"receipt"];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:receiptPath]) {
+            NSData *dummy = [@"STOREKIT_VALID_RECEIPT_TOKEN" dataUsingEncoding:NSUTF8StringEncoding];
+            [dummy writeToFile:receiptPath atomically:YES];
+        }
+        return [NSURL fileURLWithPath:receiptPath];
+    }
+    return url;
+}
+
+@end
+
+// ==========================================
+// 3. TRANSPARENT CLDelegateProxy (Exact Working Pattern)
+// Preserves original delegate & forwardInvocation while overriding location
+// ==========================================
+@interface CLDelegateProxy : NSProxy <CLLocationManagerDelegate>
+@property (nonatomic, weak) id delegate;
+@property (nonatomic, weak) CLLocationManager *manager;
+- (instancetype)initWithDelegate:(id)delegate manager:(CLLocationManager *)mgr;
+@end
+
+@implementation CLDelegateProxy
+
+- (instancetype)initWithDelegate:(id)delegate manager:(CLLocationManager *)mgr {
+    _delegate = delegate;
     _manager = mgr;
     return self;
 }
@@ -120,156 +121,203 @@ static CLLocation *createSpoofedLocation(void) {
         aSelector == @selector(locationManager:didUpdateToLocation:fromLocation:)) {
         return YES;
     }
-    return [_originalDelegate respondsToSelector:aSelector];
+    return [_delegate respondsToSelector:aSelector];
 }
 
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
-    if (_originalDelegate) {
-        return [_originalDelegate methodSignatureForSelector:sel];
+    if (_delegate) {
+        return [_delegate methodSignatureForSelector:sel];
     }
     return [NSObject instanceMethodSignatureForSelector:@selector(init)];
 }
 
 - (void)forwardInvocation:(NSInvocation *)invocation {
-    if (_originalDelegate && [_originalDelegate respondsToSelector:[invocation selector]]) {
-        [invocation invokeWithTarget:_originalDelegate];
+    if (_delegate && [_delegate respondsToSelector:[invocation selector]]) {
+        [invocation invokeWithTarget:_delegate];
     }
 }
 
 - (void)locationManager:(CLLocationManager *)manager didUpdateLocations:(NSArray<CLLocation *> *)locations {
     if (g_spoofEnabled) {
-        CLLocation *fake = createSpoofedLocation();
-        if (_originalDelegate && [_originalDelegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-            [_originalDelegate locationManager:manager didUpdateLocations:@[fake]];
+        CLLocation *fake = getFreshOverrideLocation();
+        if (_delegate && [_delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+            [_delegate locationManager:manager didUpdateLocations:@[fake]];
             return;
         }
     }
-    if (_originalDelegate && [_originalDelegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-        [_originalDelegate locationManager:manager didUpdateLocations:locations];
+    if (_delegate && [_delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+        [_delegate locationManager:manager didUpdateLocations:locations];
     }
 }
 
 - (void)locationManager:(CLLocationManager *)manager didUpdateToLocation:(CLLocation *)newLocation fromLocation:(CLLocation *)oldLocation {
     if (g_spoofEnabled) {
-        CLLocation *fake = createSpoofedLocation();
-        if (_originalDelegate && [_originalDelegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
-            [_originalDelegate locationManager:manager didUpdateToLocation:fake fromLocation:oldLocation];
+        CLLocation *fake = getFreshOverrideLocation();
+        if (_delegate && [_delegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
+            [_delegate locationManager:manager didUpdateToLocation:fake fromLocation:oldLocation];
             return;
         }
     }
-    if (_originalDelegate && [_originalDelegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
-        [_originalDelegate locationManager:manager didUpdateToLocation:newLocation fromLocation:oldLocation];
+    if (_delegate && [_delegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
+        [_delegate locationManager:manager didUpdateToLocation:newLocation fromLocation:oldLocation];
     }
 }
 
 @end
 
-%hook CLLocation
+// ==========================================
+// 4. CLLocationManager (Swizzling Category - Exact Working Binary Pattern)
+// ==========================================
+@interface CLLocationManager (Swizzling)
+- (void)swizzled_setDelegate:(id<CLLocationManagerDelegate>)delegate;
+- (CLLocation *)swizzled_location;
+@end
 
-- (CLLocationCoordinate2D)coordinate {
-    if (g_spoofEnabled) {
-        return CLLocationCoordinate2DMake(g_spoofLatitude, g_spoofLongitude);
-    }
-    return %orig;
+@implementation CLLocationManager (Swizzling)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class cls = [CLLocationManager class];
+        
+        // 1. Swizzle setDelegate:
+        SEL origSetDel = @selector(setDelegate:);
+        SEL swizSetDel = @selector(swizzled_setDelegate:);
+        Method m1 = class_getInstanceMethod(cls, origSetDel);
+        Method m2 = class_getInstanceMethod(cls, swizSetDel);
+        if (m1 && m2) {
+            method_exchangeImplementations(m1, m2);
+        }
+        
+        // 2. Swizzle location getter
+        SEL origLoc = @selector(location);
+        SEL swizLoc = @selector(swizzled_location);
+        Method m3 = class_getInstanceMethod(cls, origLoc);
+        Method m4 = class_getInstanceMethod(cls, swizLoc);
+        if (m3 && m4) {
+            method_exchangeImplementations(m3, m4);
+        }
+    });
 }
 
-%end
-
-%hook CLLocationManager
-
-- (instancetype)init {
-    CLLocationManager *mgr = %orig;
-    if (!g_activeManagers) {
-        g_activeManagers = [NSHashTable weakObjectsHashTable];
-    }
-    [g_activeManagers addObject:mgr];
-    return mgr;
-}
-
-- (void)setDelegate:(id<CLLocationManagerDelegate>)delegate {
+- (void)swizzled_setDelegate:(id<CLLocationManagerDelegate>)delegate {
     if (!g_activeManagers) {
         g_activeManagers = [NSHashTable weakObjectsHashTable];
     }
     [g_activeManagers addObject:self];
     
-    if (delegate && ![delegate isKindOfClass:[HadiLocationDelegateProxy class]]) {
-        HadiLocationDelegateProxy *proxy = [[HadiLocationDelegateProxy alloc] initWithOriginalDelegate:delegate manager:self];
-        objc_setAssociatedObject(self, "HadiLocationDelegateProxyKey", proxy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        %orig((id<CLLocationManagerDelegate>)proxy);
+    if (delegate && ![delegate isKindOfClass:[CLDelegateProxy class]]) {
+        CLDelegateProxy *proxy = [[CLDelegateProxy alloc] initWithDelegate:delegate manager:self];
+        objc_setAssociatedObject(self, "HadiCLDelegateProxyAssocKey", proxy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [self swizzled_setDelegate:(id<CLLocationManagerDelegate>)proxy];
         return;
     }
-    %orig(delegate);
+    [self swizzled_setDelegate:delegate];
 }
 
-- (CLLocation *)location {
+- (CLLocation *)swizzled_location {
     if (g_spoofEnabled) {
-        return createSpoofedLocation();
+        return getFreshOverrideLocation();
     }
-    return %orig;
+    return [self swizzled_location];
 }
 
-- (void)startUpdatingLocation {
-    %orig;
-    if (!g_activeManagers) {
-        g_activeManagers = [NSHashTable weakObjectsHashTable];
-    }
-    [g_activeManagers addObject:self];
+@end
+
+// ==========================================
+// 5. MKUserLocation (Swizzling Category - Exact Working Binary Pattern)
+// ==========================================
+@interface MKUserLocation (Swizzling)
+- (CLLocation *)swizzled_location;
+- (CLLocationCoordinate2D)swizzled_coordinate;
+@end
+
+@implementation MKUserLocation (Swizzling)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class cls = [MKUserLocation class];
+        
+        SEL origLoc = @selector(location);
+        SEL swizLoc = @selector(swizzled_location);
+        Method m1 = class_getInstanceMethod(cls, origLoc);
+        Method m2 = class_getInstanceMethod(cls, swizLoc);
+        if (m1 && m2) method_exchangeImplementations(m1, m2);
+        
+        SEL origCoord = @selector(coordinate);
+        SEL swizCoord = @selector(swizzled_coordinate);
+        Method m3 = class_getInstanceMethod(cls, origCoord);
+        Method m4 = class_getInstanceMethod(cls, swizCoord);
+        if (m3 && m4) method_exchangeImplementations(m3, m4);
+    });
+}
+
+- (CLLocation *)swizzled_location {
     if (g_spoofEnabled) {
-        CLLocation *fake = createSpoofedLocation();
-        if (self.delegate && [self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-            [self.delegate locationManager:self didUpdateLocations:@[fake]];
-        }
+        return getFreshOverrideLocation();
     }
+    return [self swizzled_location];
 }
 
-- (void)requestLocation {
+- (CLLocationCoordinate2D)swizzled_coordinate {
     if (g_spoofEnabled) {
-        CLLocation *fake = createSpoofedLocation();
-        if (self.delegate && [self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-            [self.delegate locationManager:self didUpdateLocations:@[fake]];
-            return;
-        }
+        return CLLocationCoordinate2DMake(g_spoofLatitude, g_spoofLongitude);
     }
-    %orig;
+    return [self swizzled_coordinate];
 }
 
-%end
+@end
 
-static void triggerGlobalLocationUpdate(void) {
+// ==========================================
+// 6. BROADCAST TIMER & NOTIFICATION DISPATCH
+// ==========================================
+static void triggerLocationBroadcast(void) {
     if (!g_activeManagers) return;
     dispatch_async(dispatch_get_main_queue(), ^{
-        CLLocation *fake = createSpoofedLocation();
+        CLLocation *loc = getFreshOverrideLocation();
         for (CLLocationManager *mgr in [g_activeManagers allObjects]) {
             if (mgr.delegate && [mgr.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
-                [mgr.delegate locationManager:mgr didUpdateLocations:@[fake]];
+                [mgr.delegate locationManager:mgr didUpdateLocations:@[loc]];
             }
         }
     });
 }
 
-static void startGpsPulseTimer(void) {
-    if (g_gpsPulseTimer) return;
+static void startPulseTimer(void) {
+    if (g_pulseTimer) return;
     dispatch_queue_t queue = dispatch_get_main_queue();
-    g_gpsPulseTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
-    dispatch_source_set_timer(g_gpsPulseTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 0.1 * NSEC_PER_SEC);
-    dispatch_source_set_event_handler(g_gpsPulseTimer, ^{
+    g_pulseTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_set_timer(g_pulseTimer, dispatch_time(DISPATCH_TIME_NOW, 0), 1 * NSEC_PER_SEC, 0.1 * NSEC_PER_SEC);
+    dispatch_source_set_event_handler(g_pulseTimer, ^{
         if (g_spoofEnabled) {
-            triggerGlobalLocationUpdate();
+            triggerLocationBroadcast();
         }
     });
-    dispatch_resume(g_gpsPulseTimer);
+    dispatch_resume(g_pulseTimer);
 }
 
-static void stopGpsPulseTimer(void) {
-    if (g_gpsPulseTimer) {
-        dispatch_source_cancel(g_gpsPulseTimer);
-        g_gpsPulseTimer = nil;
+static void stopPulseTimer(void) {
+    if (g_pulseTimer) {
+        dispatch_source_cancel(g_pulseTimer);
+        g_pulseTimer = nil;
     }
 }
 
 // ==========================================
-// MAP VIEW CONTROLLER (DIRECT ACCESS - NO VPS LOGIN REQUIRED)
+// 7. MAP VIEW CONTROLLER (Leaflet + Talabat Scanner)
 // ==========================================
+@interface HadiModMapViewController : UIViewController <WKNavigationDelegate, WKScriptMessageHandler>
+@property (nonatomic, strong) WKWebView *webView;
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UILabel *coordsLabel;
+@property (nonatomic, strong) UIButton *btnSpoof;
+@property (nonatomic, strong) UIButton *btnNormal;
+@property (nonatomic, strong) UIButton *btnSave;
+@property (nonatomic, strong) UIButton *btnFav;
+@property (nonatomic, strong) UIButton *btnTalabat;
+@end
+
 @implementation HadiModMapViewController {
     float _lastVolume;
     BOOL _isFetchingTalabat;
@@ -280,14 +328,12 @@ static void stopGpsPulseTimer(void) {
     self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:1.0];
     _isFetchingTalabat = NO;
     
-    // Top Bar Container
     CGFloat topBarH = 120.0;
     UIView *topBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, topBarH)];
     topBar.backgroundColor = [UIColor colorWithRed:0.11 green:0.12 blue:0.15 alpha:1.0];
     topBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:topBar];
     
-    // Header Label
     self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 44, self.view.bounds.size.width - 32, 34)];
     self.titleLabel.text = @"HADI MOD GPS CONTROLLER";
     self.titleLabel.textColor = [UIColor colorWithRed:1.0 green:0.45 blue:0.0 alpha:1.0];
@@ -304,7 +350,6 @@ static void stopGpsPulseTimer(void) {
     self.coordsLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [topBar addSubview:self.coordsLabel];
     
-    // WebKit Map View
     WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
     [config.userContentController addScriptMessageHandler:self name:@"coordinateHandler"];
     self.webView = [[WKWebView alloc] initWithFrame:CGRectZero configuration:config];
@@ -312,7 +357,6 @@ static void stopGpsPulseTimer(void) {
     self.webView.navigationDelegate = self;
     [self.view addSubview:self.webView];
     
-    // Bottom Controls Bar
     CGFloat bottomH = 100.0;
     UIView *bottomBar = [[UIView alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height - bottomH, self.view.bounds.size.width, bottomH)];
     bottomBar.backgroundColor = [UIColor colorWithRed:0.11 green:0.12 blue:0.15 alpha:0.95];
@@ -326,7 +370,6 @@ static void stopGpsPulseTimer(void) {
         [self.webView.bottomAnchor constraintEqualToAnchor:bottomBar.topAnchor]
     ]];
     
-    // Row 1 Buttons: Spoof & Normal
     CGFloat btnW = (self.view.bounds.size.width - 40) / 2.0;
     self.btnSpoof = [UIButton buttonWithType:UIButtonTypeCustom];
     self.btnSpoof.frame = CGRectMake(15, 10, btnW, 36);
@@ -348,7 +391,6 @@ static void stopGpsPulseTimer(void) {
     [self.btnNormal addTarget:self action:@selector(stopSpoofTapped) forControlEvents:UIControlEventTouchUpInside];
     [bottomBar addSubview:self.btnNormal];
     
-    // Row 2 Buttons: Save Pin, Favorites, Talabat
     CGFloat btnW3 = (self.view.bounds.size.width - 50) / 3.0;
     self.btnSave = [UIButton buttonWithType:UIButtonTypeCustom];
     self.btnSave.frame = CGRectMake(15, 54, btnW3, 34);
@@ -380,7 +422,6 @@ static void stopGpsPulseTimer(void) {
     [self.btnTalabat addTarget:self action:@selector(fetchTalabatRestaurants) forControlEvents:UIControlEventTouchUpInside];
     [bottomBar addSubview:self.btnTalabat];
     
-    // Floating Close Button
     UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeCustom];
     btnClose.frame = CGRectMake(self.view.bounds.size.width - 56, self.view.bounds.size.height - bottomH - 58, 46, 46);
     btnClose.backgroundColor = [UIColor colorWithRed:0.85 green:0.18 blue:0.18 alpha:0.95];
@@ -593,7 +634,7 @@ static void stopGpsPulseTimer(void) {
             [defs synchronize];
             
             if (g_spoofEnabled) {
-                triggerGlobalLocationUpdate();
+                triggerLocationBroadcast();
             }
         }
     }
@@ -666,7 +707,7 @@ static void stopGpsPulseTimer(void) {
             [self.webView evaluateJavaScript:js completionHandler:nil];
             
             if (g_spoofEnabled) {
-                triggerGlobalLocationUpdate();
+                triggerLocationBroadcast();
             }
             
             UIAlertController *prompt = [UIAlertController alertControllerWithTitle:pin[@"name"] message:@"Map centered on coordinate. Start spoofing here?" preferredStyle:UIAlertControllerStyleAlert];
@@ -692,8 +733,8 @@ static void stopGpsPulseTimer(void) {
     [defs setDouble:g_spoofLongitude forKey:kSpoofLonKey];
     [defs synchronize];
     
-    triggerGlobalLocationUpdate();
-    startGpsPulseTimer();
+    triggerLocationBroadcast();
+    startPulseTimer();
     [self showToast:@"GPS Spoofing Started!"];
 }
 
@@ -705,7 +746,7 @@ static void stopGpsPulseTimer(void) {
     [defs setBool:NO forKey:kSpoofEnabledKey];
     [defs synchronize];
     
-    stopGpsPulseTimer();
+    stopPulseTimer();
     [self showToast:@"GPS Returned to Real Normal"];
 }
 
@@ -716,22 +757,37 @@ static void stopGpsPulseTimer(void) {
 @end
 
 // ==========================================
-// UIWINDOW HOOK (DIRECT 2-FINGER DOUBLE-TAP TRIGGER)
+// 8. UIWINDOW HOOK (3-Finger Tap - Exact Working Binary Pattern)
 // ==========================================
-%hook UIWindow
+@interface UIWindow (AYMANGesture)
+- (void)swizzled_makeKeyAndVisible;
+@end
 
-- (void)didAddSubview:(UIView *)subview {
-    %orig;
-    dispatch_once(&g_windowOnceToken, ^{
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hadiModGestureTriggered:)];
-        tap.numberOfTouchesRequired = 2;
-        tap.numberOfTapsRequired = 2;
-        [self addGestureRecognizer:tap];
+@implementation UIWindow (AYMANGesture)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class cls = [UIWindow class];
+        SEL orig = @selector(makeKeyAndVisible);
+        SEL swiz = @selector(swizzled_makeKeyAndVisible);
+        Method m1 = class_getInstanceMethod(cls, orig);
+        Method m2 = class_getInstanceMethod(cls, swiz);
+        if (m1 && m2) method_exchangeImplementations(m1, m2);
     });
 }
 
-%new
-- (void)hadiModGestureTriggered:(UITapGestureRecognizer *)gesture {
+- (void)swizzled_makeKeyAndVisible {
+    [self swizzled_makeKeyAndVisible];
+    dispatch_once(&g_windowOnceToken, ^{
+        UITapGestureRecognizer *threeTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hadiGestureTriggered:)];
+        threeTap.numberOfTouchesRequired = 2; // 2 fingers for easy trigger
+        threeTap.numberOfTapsRequired = 2;
+        [self addGestureRecognizer:threeTap];
+    });
+}
+
+- (void)hadiGestureTriggered:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateEnded) {
         UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
         while (root.presentedViewController) {
@@ -739,23 +795,18 @@ static void stopGpsPulseTimer(void) {
         }
         if ([root isKindOfClass:[HadiModMapViewController class]]) return;
         
-        // Open map controller directly — NO LOGIN / NO VPS REQUIRED
         HadiModMapViewController *mapVC = [[HadiModMapViewController alloc] init];
         mapVC.modalPresentationStyle = UIModalPresentationFullScreen;
         [root presentViewController:mapVC animated:YES completion:nil];
     }
 }
 
-%end
+@end
 
 // ==========================================
-// AUTO-INITIALIZATION (%ctor)
+// 9. CONSTRUCTOR (%ctor)
 // ==========================================
 %ctor {
-    // 1. Sideload receipt bypass for App Store verification
-    [HadiSideloadBypass installBypass];
-    
-    // 2. Load saved location
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     double savedLat = [defs doubleForKey:kSpoofLatKey];
     double savedLon = [defs doubleForKey:kSpoofLonKey];
@@ -764,10 +815,9 @@ static void stopGpsPulseTimer(void) {
         g_spoofLongitude = savedLon;
     }
     
-    // 3. If spoofing was active previously, resume GPS pulse directly
     BOOL wasSpoofActive = [defs boolForKey:kSpoofEnabledKey];
     if (wasSpoofActive) {
         g_spoofEnabled = YES;
-        startGpsPulseTimer();
+        startPulseTimer();
     }
 }
