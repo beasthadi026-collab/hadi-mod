@@ -1,10 +1,11 @@
 // Language: Objective-C (Logos)
 // Target: iOS 13.0 - 18.x (arm64 / arm64e)
-// Features: Dual Embedded High-Res Logos (Double Size) + VPS Login + Session Watcher + Universal GPS Pulse Engine + Favorites + Save Pin + Auto-Persistent Location & State across App Restarts
+// Features: Dual Embedded High-Res Logos (Double Size) + VPS Login + Session Watcher + Universal GPS Pulse Engine + Favorites + Save Pin + Auto-Persistent Location + Talabat Restaurants Fetch on Volume Down & Button
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <WebKit/WebKit.h>
+#import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
 
 // Global persistent state
@@ -75,7 +76,10 @@ static void stopGpsPulseTimer(void);
 @property (nonatomic, strong) UIButton *btnNormal;
 @property (nonatomic, strong) UIButton *btnSave;
 @property (nonatomic, strong) UIButton *btnFav;
+@property (nonatomic, strong) UIButton *btnTalabat;
 - (void)startSpoofTapped;
+- (void)fetchTalabatRestaurants;
+- (void)showToast:(NSString *)msg;
 @end
 
 static void showLoginDialog(void);
@@ -324,13 +328,17 @@ static void stopSessionWatcher(void) {
 }
 
 // ==========================================
-// MAP VIEW CONTROLLER (Double-Sized Circular Logos + WebKit Map + Favorites)
+// MAP VIEW CONTROLLER (Double-Sized Circular Logos + WebKit Map + Favorites + Talabat Integration)
 // ==========================================
-@implementation HadiModMapViewController
+@implementation HadiModMapViewController {
+    float _lastVolume;
+    BOOL _isFetchingTalabat;
+}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:1.0];
+    _isFetchingTalabat = NO;
     
     // Top Bar Container (Height 116 to fit double-size 76x76 logos)
     CGFloat topBarH = 116.0;
@@ -404,13 +412,13 @@ static void stopSessionWatcher(void) {
     WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
     cfg.userContentController = ucc;
     
-    CGFloat bottomH = 120.0;
+    CGFloat bottomH = 165.0;
     self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(0, topBarH, self.view.bounds.size.width, self.view.bounds.size.height - topBarH - bottomH) configuration:cfg];
     self.webView.navigationDelegate = self;
     self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.webView];
     
-    // Bottom Bar (2 Rows of Action Controls)
+    // Bottom Bar (3 Rows of Action Controls)
     UIView *bottomBar = [[UIView alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height - bottomH, self.view.bounds.size.width, bottomH)];
     bottomBar.backgroundColor = [UIColor colorWithRed:0.11 green:0.12 blue:0.15 alpha:1.0];
     bottomBar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
@@ -420,7 +428,7 @@ static void stopSessionWatcher(void) {
     
     // Row 1: [+ SAVE PIN] and [* FAVORITES]
     self.btnSave = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.btnSave.frame = CGRectMake(12, 10, btnW, 44);
+    self.btnSave.frame = CGRectMake(12, 8, btnW, 40);
     self.btnSave.backgroundColor = [UIColor colorWithRed:0.22 green:0.25 blue:0.32 alpha:1.0];
     self.btnSave.layer.cornerRadius = 8;
     [self.btnSave setTitle:@"+ SAVE PIN" forState:UIControlStateNormal];
@@ -430,7 +438,7 @@ static void stopSessionWatcher(void) {
     [bottomBar addSubview:self.btnSave];
     
     self.btnFav = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.btnFav.frame = CGRectMake(self.view.bounds.size.width - 12 - btnW, 10, btnW, 44);
+    self.btnFav.frame = CGRectMake(self.view.bounds.size.width - 12 - btnW, 8, btnW, 40);
     self.btnFav.backgroundColor = [UIColor colorWithRed:0.22 green:0.25 blue:0.32 alpha:1.0];
     self.btnFav.layer.cornerRadius = 8;
     [self.btnFav setTitle:@"* FAVORITES" forState:UIControlStateNormal];
@@ -441,7 +449,7 @@ static void stopSessionWatcher(void) {
     
     // Row 2: [START SPOOF] and [STOP NORMAL]
     self.btnSpoof = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.btnSpoof.frame = CGRectMake(12, 62, btnW, 48);
+    self.btnSpoof.frame = CGRectMake(12, 54, btnW, 44);
     self.btnSpoof.backgroundColor = g_spoofEnabled ? [UIColor colorWithRed:0.08 green:0.45 blue:0.25 alpha:1.0] : [UIColor colorWithRed:0.15 green:0.68 blue:0.38 alpha:1.0];
     self.btnSpoof.layer.cornerRadius = 10;
     [self.btnSpoof setTitle:g_spoofEnabled ? @"SPOOF ACTIVE" : @"START SPOOF" forState:UIControlStateNormal];
@@ -451,7 +459,7 @@ static void stopSessionWatcher(void) {
     [bottomBar addSubview:self.btnSpoof];
     
     self.btnNormal = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.btnNormal.frame = CGRectMake(self.view.bounds.size.width - 12 - btnW, 62, btnW, 48);
+    self.btnNormal.frame = CGRectMake(self.view.bounds.size.width - 12 - btnW, 54, btnW, 44);
     self.btnNormal.backgroundColor = g_spoofEnabled ? [UIColor colorWithRed:0.85 green:0.22 blue:0.22 alpha:1.0] : [UIColor colorWithRed:0.5 green:0.15 blue:0.15 alpha:1.0];
     self.btnNormal.layer.cornerRadius = 10;
     [self.btnNormal setTitle:g_spoofEnabled ? @"STOP NORMAL" : @"NORMAL ACTIVE" forState:UIControlStateNormal];
@@ -460,7 +468,159 @@ static void stopSessionWatcher(void) {
     [self.btnNormal addTarget:self action:@selector(stopNormalTapped) forControlEvents:UIControlEventTouchUpInside];
     [bottomBar addSubview:self.btnNormal];
     
+    // Row 3: [TALABAT RESTAURANTS (Vol Down)]
+    self.btnTalabat = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.btnTalabat.frame = CGRectMake(12, 106, self.view.bounds.size.width - 24, 46);
+    self.btnTalabat.backgroundColor = [UIColor colorWithRed:1.0 green:0.35 blue:0.0 alpha:1.0];
+    self.btnTalabat.layer.cornerRadius = 10;
+    [self.btnTalabat setTitle:@"TALABAT RESTAURANTS (Vol Down)" forState:UIControlStateNormal];
+    [self.btnTalabat setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.btnTalabat.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [self.btnTalabat addTarget:self action:@selector(fetchTalabatRestaurants) forControlEvents:UIControlEventTouchUpInside];
+    [bottomBar addSubview:self.btnTalabat];
+    
     [self loadGoogleMap];
+    
+    // Hardware Volume Down Listener setup
+    AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+    [audioSession setActive:YES error:nil];
+    _lastVolume = [audioSession outputVolume];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(volumeChangedNotification:)
+                                                 name:@"AVSystemController_SystemVolumeDidChangeNotification"
+                                               object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)volumeChangedNotification:(NSNotification *)notif {
+    NSDictionary *userInfo = notif.userInfo;
+    float currentVol = [userInfo[@"AVSystemController_AudioVolumeNotificationParameter"] floatValue];
+    NSString *reason = userInfo[@"AVSystemController_AudioVolumeChangeReasonNotificationParameter"];
+    
+    // Detect Volume Down Press
+    if (currentVol < _lastVolume || (currentVol <= _lastVolume && [reason isEqualToString:@"ExplicitVolumeChange"])) {
+        [self fetchTalabatRestaurants];
+    }
+    _lastVolume = currentVol;
+}
+
+- (void)showToast:(NSString *)msg {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UILabel *toast = [[UILabel alloc] init];
+        toast.text = msg;
+        toast.textColor = [UIColor whiteColor];
+        toast.backgroundColor = [UIColor colorWithRed:1.0 green:0.35 blue:0.0 alpha:0.95];
+        toast.font = [UIFont boldSystemFontOfSize:12];
+        toast.textAlignment = NSTextAlignmentCenter;
+        toast.layer.cornerRadius = 16;
+        toast.layer.masksToBounds = YES;
+        toast.alpha = 0.0;
+        
+        CGSize sz = [msg sizeWithAttributes:@{NSFontAttributeName: toast.font}];
+        CGFloat w = sz.width + 36;
+        if (w > self.view.bounds.size.width - 40) w = self.view.bounds.size.width - 40;
+        toast.frame = CGRectMake((self.view.bounds.size.width - w) / 2.0, 130, w, 32);
+        [self.view addSubview:toast];
+        
+        [UIView animateWithDuration:0.3 animations:^{
+            toast.alpha = 1.0;
+        } completion:^(BOOL finished) {
+            [UIView animateWithDuration:0.4 delay:2.0 options:0 animations:^{
+                toast.alpha = 0.0;
+            } completion:^(BOOL fin) {
+                [toast removeFromSuperview];
+            }];
+        }];
+    });
+}
+
+- (void)fetchTalabatRestaurants {
+    if (_isFetchingTalabat) {
+        [self showToast:@"Still fetching restaurants..."];
+        return;
+    }
+    _isFetchingTalabat = YES;
+    [self showToast:@"Fetching Talabat restaurants..."];
+    
+    double lat = g_spoofLatitude;
+    double lon = g_spoofLongitude;
+    
+    NSString *urlStr = [NSString stringWithFormat:@"https://vendors.talabat.com/vendor-list/v1/composite-list/%.6f/%.6f?page=1&size=500", lat, lon];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    [req setHTTPMethod:@"GET"];
+    [req setValue:@"Dart/2.19 (dart:io)" forHTTPHeaderField:@"User-Agent"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+    [req setTimeoutInterval:15.0];
+    
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        _isFetchingTalabat = NO;
+        if (err || !data) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self showToast:@"Failed to fetch restaurants"];
+            });
+            return;
+        }
+        
+        NSError *jsonErr = nil;
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
+        NSArray *vendors = json[@"vendors"];
+        if (!vendors || ![vendors isKindOfClass:[NSArray class]] || vendors.count == 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self showToast:@"No restaurants found nearby!"];
+            });
+            return;
+        }
+        
+        NSMutableArray *list = [NSMutableArray array];
+        for (NSDictionary *v in vendors) {
+            if (![v isKindOfClass:[NSDictionary class]]) continue;
+            
+            NSString *name = v[@"bna"];
+            if (!name || name.length == 0) name = v[@"na"];
+            if (!name || name.length == 0) name = @"Restaurant";
+            
+            NSString *logo = v[@"lg"];
+            if (!logo || logo.length == 0) logo = v[@"logo"];
+            if (!logo || logo.length == 0) {
+                NSDictionary *imgs = v[@"images"];
+                if ([imgs isKindOfClass:[NSDictionary class]]) {
+                    logo = imgs[@"lg"];
+                }
+            }
+            if (logo && logo.length > 0 && ![logo hasPrefix:@"http"]) {
+                logo = [@"https://images.deliveryhero.io/image/talabat/restaurants/" stringByAppendingString:logo];
+            }
+            
+            double vLat = [v[@"latitude"] doubleValue];
+            if (vLat == 0.0) vLat = [v[@"lat"] doubleValue];
+            double vLon = [v[@"longitude"] doubleValue];
+            if (vLon == 0.0) vLon = [v[@"lon"] doubleValue];
+            
+            if (vLat != 0.0 && vLon != 0.0) {
+                [list addObject:@{
+                    @"name": name,
+                    @"logo": logo ?: @"",
+                    @"lat": @(vLat),
+                    @"lon": @(vLon)
+                }];
+            }
+        }
+        
+        NSData *listJsonData = [NSJSONSerialization dataWithJSONObject:list options:0 error:nil];
+        NSString *listJsonStr = [[NSString alloc] initWithData:listJsonData encoding:NSUTF8StringEncoding];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSString *js = [NSString stringWithFormat:@"renderTalabatRestaurants(%@);", listJsonStr];
+            [self.webView evaluateJavaScript:js completionHandler:nil];
+            [self showToast:[NSString stringWithFormat:@"Loaded %lu Talabat Restaurants!", (unsigned long)list.count]];
+        });
+    }];
+    [task resume];
 }
 
 - (void)loadGoogleMap {
@@ -471,6 +631,7 @@ static void stopSessionWatcher(void) {
     "<script src='https://maps.googleapis.com/maps/api/js?key=AIzaSyCNSBu4Vp9Ip6elthoLwAuxRAmLcoFWRHM'></script>"
     "<script>"
     "var map, marker;"
+    "var talabatMarkers = [];"
     "function init() {"
     "  var pos = {lat: %f, lng: %f};"
     "  map = new google.maps.Map(document.getElementById('map'), {zoom: 14, center: pos, disableDefaultUI: false});"
@@ -482,6 +643,44 @@ static void stopSessionWatcher(void) {
     "    marker.setPosition(e.latLng);"
     "    notify(e.latLng.lat(), e.latLng.lng());"
     "  });"
+    "}"
+    "function renderTalabatRestaurants(list) {"
+    "  if (window.talabatMarkers) {"
+    "    for (var i = 0; i < window.talabatMarkers.length; i++) {"
+    "      window.talabatMarkers[i].setMap(null);"
+    "    }"
+    "  }"
+    "  window.talabatMarkers = [];"
+    "  if (!list || !list.length) return;"
+    "  for (var i = 0; i < list.length; i++) {"
+    "    var r = list[i];"
+    "    var iconOpts = r.logo ? {"
+    "      url: r.logo,"
+    "      scaledSize: new google.maps.Size(32, 32)"
+    "    } : {"
+    "      path: google.maps.SymbolPath.CIRCLE,"
+    "      scale: 8,"
+    "      fillColor: '#FF5A00',"
+    "      fillOpacity: 1,"
+    "      strokeColor: '#FFFFFF',"
+    "      strokeWeight: 2"
+    "    };"
+    "    var m = new google.maps.Marker({"
+    "      position: {lat: r.lat, lng: r.lon},"
+    "      map: map,"
+    "      title: r.name,"
+    "      icon: iconOpts"
+    "    });"
+    "    var info = new google.maps.InfoWindow({"
+    "      content: '<div style=\"color:#000;font-weight:bold;font-size:12px;padding:4px;\">' + r.name + '</div>'"
+    "    });"
+    "    (function(mk, inf) {"
+    "      mk.addListener('click', function() {"
+    "        inf.open(map, mk);"
+    "      });"
+    "    })(m, info);"
+    "    window.talabatMarkers.push(m);"
+    "  }"
     "}"
     "function notify(lat, lng) {"
     "  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.onMapCoord) {"
