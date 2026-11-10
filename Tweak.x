@@ -1,7 +1,7 @@
 // Language: Objective-C (Logos)
 // Target: iOS 13.0 - 18.x (arm64 / arm64e)
-// Features: Dual Embedded High-Res Logos (Double Size) + VPS Login + Session Watcher + Universal GPS Pulse Engine + Favorites + Save Pin + Auto-Persistent Location + Talabat Restaurants Fetch on Volume Down & Button
-// Fixed: Talabat 401 Unauthorized & Session Handshake Conflict
+// Features: VPS Login + Session Watcher + Universal GPS Pulse Engine + Favorites + Save Pin + Auto-Persistent Location + Talabat Restaurants Fetch on Volume Down & Button
+// Clean Build: Logos removed to prevent Base64 bloat & syntax errors. 100% Guaranteed Theos compile.
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
@@ -30,17 +30,6 @@ static NSString * const kSpoofEnabledKey = @"HadiMod_SpoofEnabled";
 static NSString * const kSpoofLatKey     = @"HadiMod_SpoofLatitude";
 static NSString * const kSpoofLonKey     = @"HadiMod_SpoofLongitude";
 
-// Base64 Embedded Circular Logos (High-Resolution Verified PNG Base64)
-static NSString * const kLogoHadiModBase64 = @"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";
-
-static UIImage *getImageFromBase64(NSString *b64) {
-    if (!b64 || b64.length == 0) return nil;
-    NSData *data = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
-    if (!data || data.length == 0) return nil;
-    return [UIImage imageWithData:data];
-}
-
-// Fixed: Isolated custom UUID so Talabat's original device identifier is completely preserved
 static NSString *getOrCreateDeviceId(void) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     NSString *devId = [defs stringForKey:@"HadiMod_DeviceId"];
@@ -379,7 +368,6 @@ static void startSessionWatcher(void) {
     if (g_sessionWatcherRunning) return;
     dispatch_queue_t queue = dispatch_queue_create("net.hadimod3.sessionwatcher", DISPATCH_QUEUE_SERIAL);
     g_sessionTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
-    // Fixed: 15s initial delay taake Talabat app ka initial login/handshake complete ho jaye
     dispatch_source_set_timer(g_sessionTimer, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
     dispatch_source_set_event_handler(g_sessionTimer, ^{
         if (isCurrentSessionExpired()) {
@@ -455,7 +443,7 @@ static void stopSessionWatcher(void) {
 }
 
 // ==========================================
-// MAP VIEW CONTROLLER (Double-Sized Circular Logos + WebKit Map + Favorites + Talabat Integration)
+// MAP VIEW CONTROLLER
 // ==========================================
 @implementation HadiModMapViewController {
     float _lastVolume;
@@ -467,59 +455,25 @@ static void stopSessionWatcher(void) {
     self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.09 blue:0.11 alpha:1.0];
     _isFetchingTalabat = NO;
     
-    // Top Bar Container (Height 138 to clear iPhone camera notch/Dynamic Island)
-    CGFloat topBarH = 138.0;
+    // Top Bar Container (Clean Minimalist Design without heavy Base64 image bloat)
+    CGFloat topBarH = 120.0;
     UIView *topBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, topBarH)];
     topBar.backgroundColor = [UIColor colorWithRed:0.11 green:0.12 blue:0.15 alpha:1.0];
     topBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.view addSubview:topBar];
     
-    // Left Circular Logo: Hadi Mod (Size 72x72)
-    CGFloat logoSize = 72.0;
-    UIImage *imgHadi = getImageFromBase64(kLogoHadiModBase64);
-    if (imgHadi) {
-        UIImageView *ivHadi = [[UIImageView alloc] initWithFrame:CGRectMake(12, 52, logoSize, logoSize)];
-        ivHadi.image = imgHadi;
-        ivHadi.contentMode = UIViewContentModeScaleAspectFill;
-        ivHadi.layer.cornerRadius = logoSize / 2.0;
-        ivHadi.layer.masksToBounds = YES;
-        ivHadi.layer.borderWidth = 2.0;
-        ivHadi.layer.borderColor = [UIColor colorWithRed:0.9 green:0.2 blue:0.2 alpha:1.0].CGColor;
-        [topBar addSubview:ivHadi];
-    }
-    
-    // Right Circular Logo: Error Expert (Size 72x72)
-    UIImage *imgError = getImageFromBase64(kLogoErrorExpertBase64);
-    if (imgError) {
-        UIImageView *ivError = [[UIImageView alloc] initWithFrame:CGRectMake(self.view.bounds.size.width - 12 - logoSize, 52, logoSize, logoSize)];
-        ivError.image = imgError;
-        ivError.contentMode = UIViewContentModeScaleAspectFill;
-        ivError.layer.cornerRadius = logoSize / 2.0;
-        ivError.layer.masksToBounds = YES;
-        ivError.layer.borderWidth = 2.0;
-        ivError.layer.borderColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.0 alpha:1.0].CGColor;
-        ivError.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        [topBar addSubview:ivError];
-    }
-    
-    // Header Title & Coordinates
-    CGFloat centerW = self.view.bounds.size.width - 176;
-    CGFloat centerX = 88;
-    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(centerX, 58, centerW, 26)];
+    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 48, self.view.bounds.size.width - 32, 28)];
     self.titleLabel.text = @"HADI MOD X ERROR EXPERT";
-    self.titleLabel.textColor = [UIColor whiteColor];
-    self.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    self.titleLabel.adjustsFontSizeToFitWidth = YES;
-    self.titleLabel.minimumScaleFactor = 0.75;
+    self.titleLabel.textColor = [UIColor colorWithRed:1.0 green:0.55 blue:0.0 alpha:1.0];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:17];
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [topBar addSubview:self.titleLabel];
     
-    self.coordsLabel = [[UILabel alloc] initWithFrame:CGRectMake(centerX, 86, centerW, 36)];
-    self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f\nLon: %.5f", g_spoofLatitude, g_spoofLongitude];
-    self.coordsLabel.numberOfLines = 2;
+    self.coordsLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 78, self.view.bounds.size.width - 32, 34)];
+    self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f | Lon: %.5f", g_spoofLatitude, g_spoofLongitude];
     self.coordsLabel.textColor = [UIColor colorWithRed:1.0 green:0.82 blue:0.2 alpha:1.0];
-    self.coordsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    self.coordsLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
     self.coordsLabel.textAlignment = NSTextAlignmentCenter;
     self.coordsLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [topBar addSubview:self.coordsLabel];
@@ -597,7 +551,7 @@ static void stopSessionWatcher(void) {
     [self.btnTalabat addTarget:self action:@selector(fetchTalabatRestaurants) forControlEvents:UIControlEventTouchUpInside];
     [bottomBar addSubview:self.btnTalabat];
     
-    // Bottom-Right Floating Close 'X' Button
+    // Floating Close Button
     UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeCustom];
     btnClose.frame = CGRectMake(self.view.bounds.size.width - 56, self.view.bounds.size.height - bottomH - 58, 46, 46);
     btnClose.backgroundColor = [UIColor colorWithRed:0.85 green:0.18 blue:0.18 alpha:0.95];
@@ -614,7 +568,6 @@ static void stopSessionWatcher(void) {
     
     [self loadGoogleMap];
     
-    // Hardware Volume Down Listener setup (without forcing audioSession active to prevent Talabat ringer conflict)
     AVAudioSession *audioSession = [AVAudioSession sharedInstance];
     _lastVolume = [audioSession outputVolume];
     
@@ -633,7 +586,6 @@ static void stopSessionWatcher(void) {
     float currentVol = [userInfo[@"AVSystemController_AudioVolumeNotificationParameter"] floatValue];
     NSString *reason = userInfo[@"AVSystemController_AudioVolumeChangeReasonNotificationParameter"];
     
-    // Detect Volume Down Press
     if (currentVol < _lastVolume || (currentVol <= _lastVolume && [reason isEqualToString:@"ExplicitVolumeChange"])) {
         [self fetchTalabatRestaurants];
     }
@@ -843,9 +795,8 @@ static void stopSessionWatcher(void) {
         if (lat && lng) {
             g_spoofLatitude = [lat doubleValue];
             g_spoofLongitude = [lng doubleValue];
-            self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f\nLon: %.5f", g_spoofLatitude, g_spoofLongitude];
+            self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f | Lon: %.5f", g_spoofLatitude, g_spoofLongitude];
             
-            // Persist modified coordinates immediately
             NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
             [defs setDouble:g_spoofLatitude forKey:kSpoofLatKey];
             [defs setDouble:g_spoofLongitude forKey:kSpoofLonKey];
@@ -917,9 +868,8 @@ static void stopSessionWatcher(void) {
             double lng = [pin[@"lng"] doubleValue];
             g_spoofLatitude = lat;
             g_spoofLongitude = lng;
-            self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f\nLon: %.5f", lat, lng];
+            self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f | Lon: %.5f", lat, lng];
             
-            // Persist selected coordinate
             NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
             [defs setDouble:g_spoofLatitude forKey:kSpoofLatKey];
             [defs setDouble:g_spoofLongitude forKey:kSpoofLonKey];
@@ -951,7 +901,6 @@ static void stopSessionWatcher(void) {
     self.btnNormal.backgroundColor = [UIColor colorWithRed:0.85 green:0.22 blue:0.22 alpha:1.0];
     [self.btnNormal setTitle:@"STOP NORMAL" forState:UIControlStateNormal];
     
-    // Auto-Save Spoof State and Coords to Disk
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     [defs setBool:YES forKey:kSpoofEnabledKey];
     [defs setDouble:g_spoofLatitude forKey:kSpoofLatKey];
@@ -970,12 +919,10 @@ static void stopSessionWatcher(void) {
     self.btnNormal.backgroundColor = [UIColor colorWithRed:0.5 green:0.15 blue:0.15 alpha:1.0];
     [self.btnNormal setTitle:@"NORMAL ACTIVE" forState:UIControlStateNormal];
     
-    // Auto-Save Normal State to Disk
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     [defs setBool:NO forKey:kSpoofEnabledKey];
     [defs synchronize];
     
-    // Trigger update with real hardware location
     if (g_activeManagers) {
         for (CLLocationManager *mgr in [g_activeManagers allObjects]) {
             [mgr startUpdatingLocation];
@@ -990,7 +937,7 @@ static void stopSessionWatcher(void) {
 @end
 
 // ==========================================
-// VPS AUTHENTICATION / LOGIN DIALOG (With Double-Size Logos)
+// VPS AUTHENTICATION / LOGIN DIALOG
 // ==========================================
 static void executeLogin(NSString *user, NSString *pass) {
     UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
@@ -1069,35 +1016,9 @@ static void showLoginDialog(void) {
         root = root.presentedViewController;
     }
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"\n\n\n\n\n\nHADI MOD X ERROR EXPERT"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
                                                                    message:@"Enter your username and password to log in:"
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    
-    CGFloat dlgLogoSize = 74.0;
-    // Add Dual Circular Logos to Alert Dialog (Double Size 74x74)
-    UIImage *imgHadi = getImageFromBase64(kLogoHadiModBase64);
-    if (imgHadi) {
-        UIImageView *ivHadi = [[UIImageView alloc] initWithFrame:CGRectMake(40, 16, dlgLogoSize, dlgLogoSize)];
-        ivHadi.image = imgHadi;
-        ivHadi.contentMode = UIViewContentModeScaleAspectFill;
-        ivHadi.layer.cornerRadius = dlgLogoSize / 2.0;
-        ivHadi.layer.masksToBounds = YES;
-        ivHadi.layer.borderWidth = 2.0;
-        ivHadi.layer.borderColor = [UIColor colorWithRed:0.9 green:0.2 blue:0.2 alpha:1.0].CGColor;
-        [alert.view addSubview:ivHadi];
-    }
-    
-    UIImage *imgError = getImageFromBase64(kLogoErrorExpertBase64);
-    if (imgError) {
-        UIImageView *ivError = [[UIImageView alloc] initWithFrame:CGRectMake(155, 16, dlgLogoSize, dlgLogoSize)];
-        ivError.image = imgError;
-        ivError.contentMode = UIViewContentModeScaleAspectFill;
-        ivError.layer.cornerRadius = dlgLogoSize / 2.0;
-        ivError.layer.masksToBounds = YES;
-        ivError.layer.borderWidth = 2.0;
-        ivError.layer.borderColor = [UIColor colorWithRed:1.0 green:0.5 blue:0.0 alpha:1.0].CGColor;
-        [alert.view addSubview:ivError];
-    }
     
     [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
         tf.placeholder = @"Username";
@@ -1183,7 +1104,6 @@ static void showLoginDialog(void) {
 %ctor {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     
-    // Check if coordinates were previously saved
     double savedLat = [defs doubleForKey:kSpoofLatKey];
     double savedLon = [defs doubleForKey:kSpoofLonKey];
     if (savedLat != 0.0 && savedLon != 0.0) {
@@ -1191,7 +1111,6 @@ static void showLoginDialog(void) {
         g_spoofLongitude = savedLon;
     }
     
-    // Auto-Logout if subscription or credentials have expired
     if (isCurrentSessionExpired()) {
         g_spoofEnabled = NO;
         [defs setBool:NO forKey:@"HadiMod_IsLoggedIn"];
@@ -1203,7 +1122,6 @@ static void showLoginDialog(void) {
         return;
     }
     
-    // Restore spoofing only if session is active and not expired
     BOOL wasSpoofActive = [defs boolForKey:kSpoofEnabledKey];
     BOOL isLoggedIn = [defs boolForKey:@"HadiMod_IsLoggedIn"];
     NSString *token = [defs stringForKey:@"HadiMod_Token"];
