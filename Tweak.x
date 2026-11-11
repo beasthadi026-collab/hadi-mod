@@ -274,7 +274,7 @@
     CGFloat y = 370;
 
     UIColor *toggleBg = self.isSpoofing ? [UIColor colorWithRed:0.1 green:0.7 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
-    self.btnToggle = [self makeButton:self.isSpoofing ? @"✓ SPOOF ON" : "○ SPOOF OFF" bg:toggleBg frame:CGRectMake(10, y, btnW, 40) sel:@selector(toggleSpoof)];
+    self.btnToggle = [self makeButton:self.isSpoofing ? @"✓ SPOOF ON" : @"○ SPOOF OFF" bg:toggleBg frame:CGRectMake(10, y, btnW, 40) sel:@selector(toggleSpoof)];
     [self.view addSubview:self.btnToggle];
 
     UIButton *btnSave = [self makeButton:@"SET PIN" bg:[UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0] frame:CGRectMake(15 + btnW, y, btnW, 40) sel:@selector(saveLocation)];
@@ -380,6 +380,7 @@ static HadiModMapViewController *g_mapVC = nil;
     static dispatch_once_t windowOnceToken;
     dispatch_once(&windowOnceToken, ^{
         UITapGestureRecognizer *tripleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hadiGestureTriggered:)];
+        tripleTap.numberOfTapRequired = 3; // Note: Handled below
         tripleTap.numberOfTapsRequired = 3;
         tripleTap.numberOfTouchesRequired = 2; // 2 fingers 3 taps
         [self addGestureRecognizer:tripleTap];
