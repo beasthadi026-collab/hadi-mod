@@ -14,18 +14,17 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git make perl xz-utils build-essential libtinfo5 zstd curl wget dpkg
+          sudo apt-get install -y git make perl xz-utils build-essential libtinfo5 zstd curl wget
 
       - name: Setup Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
-      - name: Setup Official iOS SDKs
+      - name: Setup iOS SDKs
         run: |
           rm -rf $HOME/theos/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $HOME/theos/sdks
-          rm -rf $HOME/theos/sdks/iPhoneOS14.5.sdk $HOME/theos/sdks/iPhoneOS15* $HOME/theos/sdks/iPhoneOS16*
 
       - name: Install Linux iOS Toolchain (Clang)
         run: |
@@ -37,23 +36,16 @@ jobs:
           mv $TMP/ios-arm64e-clang-toolchain/* $HOME/theos/toolchain/linux/iphone/
           rm -rf $TMP toolchain.tar.lzma
 
-      - name: Install CydiaSubstrate Library
-        run: |
-          cd /tmp
-          wget http://apt.saurik.com/debs/mobilesubstrate_0.9.6011_iphoneos-arm.deb
-          dpkg-deb -x mobilesubstrate_0.9.6011_iphoneos-arm.deb substrate
-          cp substrate/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate $HOME/theos/lib/libsubstrate.dylib
-          cp substrate/Library/Frameworks/CydiaSubstrate.framework/Headers/CydiaSubstrate.h $HOME/theos/include/substrate.h
-          rm -rf substrate mobilesubstrate_0.9.6011_iphoneos-arm.deb
-
       - name: Compile Tweak
         run: |
           export THEOS=$HOME/theos
           make clean
-          make
+          make FINALPACKAGE=1
 
       - name: Upload Ready Dylib Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LocationHook-Dylib
-          path: .theos/obj/debug/*.dylib
+          path: |
+            .theos/obj/*.dylib
+            .theos/obj/debug/*.dylib
