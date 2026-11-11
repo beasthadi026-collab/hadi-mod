@@ -380,7 +380,6 @@ static HadiModMapViewController *g_mapVC = nil;
     static dispatch_once_t windowOnceToken;
     dispatch_once(&windowOnceToken, ^{
         UITapGestureRecognizer *tripleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hadiGestureTriggered:)];
-        tripleTap.numberOfTapRequired = 3; // Note: Handled below
         tripleTap.numberOfTapsRequired = 3;
         tripleTap.numberOfTouchesRequired = 2; // 2 fingers 3 taps
         [self addGestureRecognizer:tripleTap];
