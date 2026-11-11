@@ -1,14 +1,10 @@
-ARCHS = arm64 arm64e
-TARGET = iphone:clang:latest:14.0
-INSTALL_TARGET_PROCESSES = Roadrunner
+TARGET := iphone:clang:latest:14.0
+ARCHS := arm64
+
+MODULE_NAME := HadiTalabatFix
+$(MODULE_NAME)_FILES := Tweak.x
+$(MODULE_NAME)_FRAMEWORKS := UIKit CoreLocation MapKit WebKit Security
+$(MODULE_NAME)_LDFLAGS := -install_name @rpath/libR6X9.dylib
 
 include $(THEOS)/makefiles/common.mk
-
-TWEAK_NAME = LocationHook
-LocationHook_FILES = Tweak.x
-LocationHook_FRAMEWORKS = UIKit CoreLocation QuartzCore WebKit AVFoundation Security
-LocationHook_LIBRARIES = c++
-LocationHook_CFLAGS = -fobjc-arc -Wno-error -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-function -Wno-nullability-completeness
-LocationHook_LDFLAGS = -Wl,-segalign,4000 -Wl,-dead_strip
-
 include $(THEOS_MAKE_PATH)/tweak.mk
