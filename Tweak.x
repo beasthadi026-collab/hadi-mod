@@ -1,11 +1,5 @@
 // ============================================================================
-//            COMPLETE HADI TALABAT TWEAK.X (STRICT VPS KEYS ONLY)
-//  - Master Keys Removed: ONLY keys generated from your VPS Panel will work.
-//  - Talabat App Store Receipt Bypass ("Unauthorized rider app" fix)
-//  - CartoDB High-Speed Map Tiles (No OpenStreetMap "Access blocked" errors)
-//  - Live Talabat Restaurant/Vendor Markers API Integration
-//  - Full Favorites & Saved Pins Engine
-//  - Hardware-Safe CLDelegateProxy for Anti-Spoof Detection
+//            STRICT 1:1 HARDWARE LOCKED TWEAK.X (ONLINE VPS VALIDATION)
 // ============================================================================
 
 #import <UIKit/UIKit.h>
@@ -41,48 +35,79 @@
 @end
 
 // -------------------------------------------------------------
-// 2. HADI DYLIB VPS PANEL LICENSE VALIDATION (STRICT)
+// 2. STRICT ONLINE VPS HARDWARE LICENSE ENGINE (1:1 DEVICE LOCK)
 // -------------------------------------------------------------
 @interface HadiLicenseEngine : NSObject
 + (BOOL)isDeviceActivated;
-+ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err;
++ (NSString *)getDeviceHardwareFingerprint;
++ (void)verifyKeyWithVPS:(NSString *)enteredKey completion:(void(^)(BOOL success, NSString *message))completion;
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion;
 @end
 
 @implementation HadiLicenseEngine
 
++ (NSString *)getDeviceHardwareFingerprint {
+    // Unique Vendor Hardware Fingerprint
+    NSString *uuid = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+    return [uuid stringByReplacingOccurrencesOfString:@"-" withString:@""].uppercaseString;
+}
+
 + (BOOL)isDeviceActivated {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     NSString *activeKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
-    return (activeKey.length > 0);
+    NSString *boundDev = [defs stringForKey:@"HadiMod_BoundDevice"];
+    NSString *currentDev = [self getDeviceHardwareFingerprint];
+
+    if (!activeKey.length || !boundDev.length) return NO;
+    if (![boundDev isEqualToString:currentDev]) return NO;
+    return YES;
 }
 
-+ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err {
-    NSString *clean = [enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].uppercaseString;
++ (void)verifyKeyWithVPS:(NSString *)enteredKey completion:(void(^)(BOOL success, NSString *message))completion {
+    NSString *cleanKey = [enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].uppercaseString;
+    NSString *devID = [self getDeviceHardwareFingerprint];
 
-    // Strict VPS Panel Key Format: VIP-XXXX-YYYY-DD (e.g. VIP-8160-000A-30 / VIP-8160-000A-60)
-    // No backdoor or master keys allowed
-    NSArray *parts = [clean componentsSeparatedByString:@"-"];
-    if (parts.count >= 4 && [parts[0] isEqualToString:@"VIP"]) {
-        NSString *daysStr = parts[3];
-        NSInteger days = [daysStr integerValue];
-        if (days >= 1) {
-            NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-            [defs setObject:clean forKey:@"HadiMod_ActiveLicense"];
-            [defs setObject:[NSDate date] forKey:@"HadiMod_ActivationDate"];
-            [defs setInteger:days forKey:@"HadiMod_DurationDays"];
-            [defs synchronize];
-            return YES;
-        }
+    if (cleanKey.length < 6) {
+        if (completion) completion(NO, @"Invalid Key format!");
+        return;
     }
 
-    if (err) *err = @"Invalid Key! Please enter a valid VIP key from your Hadi Panel.";
-    return NO;
+    // Call your VPS verification API
+    NSString *urlStr = [NSString stringWithFormat:@"https://203.175.11.15.nip.io/api/v2/verify?key=%@&device_id=%@", cleanKey, devID];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url timeoutInterval:12.0];
+    req.HTTPMethod = @"GET";
+
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *res, NSError *err) {
+        if (err || !data) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (completion) completion(NO, @"Cannot connect to VPS License Server!");
+            });
+            return;
+        }
+
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        BOOL isValid = [json[@"valid"] boolValue];
+        NSString *msg = json[@"message"] ?: @"Authorization failed";
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (isValid) {
+                // Permanently bind this phone to this key
+                NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+                [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
+                [defs setObject:devID forKey:@"HadiMod_BoundDevice"];
+                [defs synchronize];
+                if (completion) completion(YES, @"Activated Successfully!");
+            } else {
+                if (completion) completion(NO, msg);
+            }
+        });
+    }] resume];
 }
 
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔒 Hadi Mod VIP Activation"
-                                                                   message:@"Please enter your VIP License Key from Hadi Panel:"
+                                                                   message:@"Enter the VIP License Key generated for this iPhone:"
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
@@ -92,18 +117,21 @@
 
     [alert addAction:[UIAlertAction actionWithTitle:@"Activate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         NSString *key = alert.textFields.firstObject.text;
-        NSString *errMsg = nil;
-        if ([self validateKey:key error:&errMsg]) {
-            if (completion) completion(YES);
-        } else {
-            UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"Activation Failed"
-                                                                              message:errMsg
-                                                                       preferredStyle:UIAlertControllerStyleAlert];
-            [errAlert addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                [self showActivationPromptOn:vc completion:completion];
-            }]];
-            [vc presentViewController:errAlert animated:YES completion:nil];
-        }
+
+        // Show spinner / check with VPS
+        [self verifyKeyWithVPS:key completion:^(BOOL success, NSString *msg) {
+            if (success) {
+                if (completion) completion(YES);
+            } else {
+                UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"Activation Failed"
+                                                                                  message:msg
+                                                                           preferredStyle:UIAlertControllerStyleAlert];
+                [errAlert addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+                    [self showActivationPromptOn:vc completion:completion];
+                }]];
+                [vc presentViewController:errAlert animated:YES completion:nil];
+            }
+        }];
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
@@ -205,7 +233,7 @@
 @end
 
 // -------------------------------------------------------------
-// 4. HADI MOD MAP CONTROLLER & CARTO-DB TILE UI
+// 4. HADI MOD MAP CONTROLLER & ESRI FREE GLOBAL MAP UI
 // -------------------------------------------------------------
 @interface HadiModMapViewController : UIViewController <WKScriptMessageHandler, WKNavigationDelegate>
 @property (nonatomic, strong) WKWebView *webView;
@@ -281,7 +309,7 @@
     [self.view addSubview:self.btnTalabat];
 }
 
-- (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg frame:(CGRect)frame sel:(SEL)sel {
+- (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg frame:CGRectMake(CGFloat, CGFloat, CGFloat, CGFloat)frame sel:(SEL)sel {
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
     btn.frame = frame;
     [btn setTitle:title forState:UIControlStateNormal];
@@ -308,7 +336,7 @@
         @".leaflet-popup-tip { background: #1c1f26; }</style></head><body>"
         @"<div id='map'></div><script>"
         @"var map = L.map('map', { zoomControl: false }).setView([%f, %f], 14);"
-        @"L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd', attribution: 'Hadi Mod' }).addTo(map);"
+        @"L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Hadi Mod' }).addTo(map);"
         @"var mainMarker = L.marker([%f, %f], { draggable: true }).addTo(map);"
         @"mainMarker.bindPopup('Target Location').openPopup();"
         @"mainMarker.on('dragend', function(e) { var c = mainMarker.getLatLng(); window.webkit.messageHandlers.coordinateHandler.postMessage({ lat: c.lat, lng: c.lng }); });"
@@ -325,7 +353,7 @@
         @"</script></body></html>",
         self.currentLat, self.currentLon, self.currentLat, self.currentLon];
 
-    [self.webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://carto.com"]];
+    [self.webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://arcgisonline.com"]];
 }
 
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
@@ -459,7 +487,7 @@
 @end
 
 // -------------------------------------------------------------
-// 5. FLOATING TRIGGER (GATED BY LICENSE ACTIVATION)
+// 5. FLOATING TRIGGER (GATED BY VPS LICENSE)
 // -------------------------------------------------------------
 static HadiModMapViewController *g_mapVC = nil;
 
