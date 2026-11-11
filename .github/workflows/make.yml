@@ -40,10 +40,17 @@ jobs:
         run: |
           export THEOS=$HOME/theos
           make clean
-          make FINALPACKAGE=1
+          make
 
-      - name: Upload Ready Dylib Artifact
+      - name: Locate Built Files
+        run: |
+          mkdir -p output
+          find . -name "*.dylib" -exec cp {} output/ \;
+          find . -name "*.deb" -exec cp {} output/ \;
+          ls -la output/
+
+      - name: Upload Ready Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: LocationHook-Dylib
-          path: .theos/**/*.dylib
+          name: LocationHook-Build
+          path: output/*
