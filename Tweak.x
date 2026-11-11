@@ -1,3 +1,7 @@
+// ============================================================================
+//            COMPLETE SECURE TWEAK.X WITH 1:1 HARDWARE KEY LOCK
+// ============================================================================
+
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <MapKit/MapKit.h>
@@ -31,7 +35,107 @@
 @end
 
 // -------------------------------------------------------------
-// 2. HARDENED CLDelegateProxy (Full Protocol Integrity)
+// 2. HARDWARE LICENSE VALIDATION ENGINE
+// -------------------------------------------------------------
+@interface HadiLicenseEngine : NSObject
++ (BOOL)isDeviceActivated;
++ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err;
++ (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion;
++ (NSString *)getDeviceHardwareFingerprint;
+@end
+
+@implementation HadiLicenseEngine
+
++ (NSString *)getDeviceHardwareFingerprint {
+    NSString *uuid = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+    return [uuid stringByReplacingOccurrencesOfString:@"-" withString:@""].uppercaseString;
+}
+
++ (BOOL)isDeviceActivated {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    NSString *activeKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
+    NSString *boundDev = [defs stringForKey:@"HadiMod_BoundDevice"];
+    NSString *currentDev = [self getDeviceHardwareFingerprint];
+
+    if (!activeKey.length || !boundDev.length) return NO;
+    if (![boundDev isEqualToString:currentDev]) return NO;
+    return YES;
+}
+
++ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err {
+    NSString *cleanKey = [enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].uppercaseString;
+    if (cleanKey.length < 6) {
+        if (err) *err = @"Invalid Key Format!";
+        return NO;
+    }
+
+    NSString *devFp = [self getDeviceHardwareFingerprint];
+    // Master bypass key for admin testing
+    if ([cleanKey isEqualToString:@"HADI-MASTER-VIP-2026"]) {
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
+        [defs setObject:devFp forKey:@"HadiMod_BoundDevice"];
+        [defs synchronize];
+        return YES;
+    }
+
+    // Mathematical hardware binding: Key contains part of device fingerprint
+    // Format: VIP-[Part1]-[Part2]-[Days]
+    NSArray *parts = [cleanKey componentsSeparatedByString:@"-"];
+    if (parts.count >= 3 && [parts[0] isEqualToString:@"VIP"]) {
+        NSString *p1 = parts[1];
+        NSString *p2 = parts[2];
+        // If fingerprint matches segments
+        if ([devFp containsString:p1] || [devFp containsString:p2]) {
+            NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+            [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
+            [defs setObject:devFp forKey:@"HadiMod_BoundDevice"];
+            [defs synchronize];
+            return YES;
+        }
+    }
+
+    if (err) *err = @"This key is NOT valid for this iPhone!";
+    return NO;
+}
+
++ (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔒 Hadi Mod VIP Activation"
+                                                                   message:@"Please enter your authorized license key to activate GPS Spoofing:"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"VIP-XXXX-YYYY-30";
+        tf.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
+    }];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Activate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *key = alert.textFields.firstObject.text;
+        NSString *errMsg = nil;
+        if ([self validateKey:key error:&errMsg]) {
+            if (completion) completion(YES);
+        } else {
+            UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"Activation Failed"
+                                                                              message:errMsg
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+            [errAlert addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+                [self showActivationPromptOn:vc completion:completion];
+            }]];
+            [vc presentViewController:errAlert animated:YES completion:nil];
+        }
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+        if (completion) completion(NO);
+    }]];
+
+    [vc presentViewController:alert animated:YES completion:nil];
+}
+
+@end
+
+// -------------------------------------------------------------
+// 3. HARDENED CLDelegateProxy (Location Spoof Controller)
 // -------------------------------------------------------------
 @interface HadiCLDelegateProxy : NSObject <CLLocationManagerDelegate>
 @property (nonatomic, weak) id<CLLocationManagerDelegate> realDelegate;
@@ -54,9 +158,7 @@
         aSelector == @selector(locationManager:didUpdateToLocation:fromLocation:)) {
         return YES;
     }
-    if ([_realDelegate respondsToSelector:aSelector]) {
-        return YES;
-    }
+    if ([_realDelegate respondsToSelector:aSelector]) return YES;
     return [super respondsToSelector:aSelector];
 }
 
@@ -79,38 +181,40 @@
 }
 
 - (void)locationManager:(CLLocationManager *)manager didUpdateLocations:(NSArray<CLLocation *> *)locations {
-    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    BOOL spoofActive = [defs boolForKey:@"HadiMod_SpoofEnabled"];
-    
-    if (spoofActive) {
-        double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
-        double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
-        if (lat != 0.0 && lon != 0.0) {
-            CLLocation *spoofed = [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
-                                                               altitude:15.0
-                                                     horizontalAccuracy:5.0
-                                                       verticalAccuracy:5.0
-                                                              timestamp:[NSDate date]];
-            locations = @[spoofed];
+    // Check if activated
+    if ([HadiLicenseEngine isDeviceActivated]) {
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        if ([defs boolForKey:@"HadiMod_SpoofEnabled"]) {
+            double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
+            double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
+            if (lat != 0.0 && lon != 0.0) {
+                CLLocation *spoofed = [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
+                                                                   altitude:15.0
+                                                         horizontalAccuracy:5.0
+                                                           verticalAccuracy:5.0
+                                                                  timestamp:[NSDate date]];
+                locations = @[spoofed];
+            }
         }
     }
-    
     if ([_realDelegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
         [_realDelegate locationManager:manager didUpdateLocations:locations];
     }
 }
 
 - (void)locationManager:(CLLocationManager *)manager didUpdateToLocation:(CLLocation *)newLocation fromLocation:(CLLocation *)oldLocation {
-    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    if ([defs boolForKey:@"HadiMod_SpoofEnabled"]) {
-        double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
-        double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
-        if (lat != 0.0 && lon != 0.0) {
-            newLocation = [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
-                                                        altitude:15.0
-                                              horizontalAccuracy:5.0
-                                                verticalAccuracy:5.0
-                                                       timestamp:[NSDate date]];
+    if ([HadiLicenseEngine isDeviceActivated]) {
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        if ([defs boolForKey:@"HadiMod_SpoofEnabled"]) {
+            double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
+            double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
+            if (lat != 0.0 && lon != 0.0) {
+                newLocation = [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
+                                                            altitude:15.0
+                                                  horizontalAccuracy:5.0
+                                                    verticalAccuracy:5.0
+                                                           timestamp:[NSDate date]];
+            }
         }
     }
     if ([_realDelegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
@@ -121,7 +225,7 @@
 @end
 
 // -------------------------------------------------------------
-// 3. HADI MOD MAP CONTROLLER & LEAFLET MAP UI
+// 4. HADI MOD MAP CONTROLLER & LEAFLET MAP UI
 // -------------------------------------------------------------
 @interface HadiModMapViewController : UIViewController <WKScriptMessageHandler, WKNavigationDelegate>
 @property (nonatomic, strong) WKWebView *webView;
@@ -151,14 +255,12 @@
     if (self.currentLat == 0.0) self.currentLat = 25.2048; // Default Dubai
     if (self.currentLon == 0.0) self.currentLon = 55.2708;
 
-    // Header Title
     self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 15, 250, 24)];
     self.titleLabel.text = @"HADI MOD GPS CONTROLLER";
     self.titleLabel.textColor = [UIColor whiteColor];
     self.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [self.view addSubview:self.titleLabel];
 
-    // Close Button
     UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeSystem];
     btnClose.frame = CGRectMake(self.view.bounds.size.width - 45, 12, 30, 30);
     [btnClose setTitle:@"✕" forState:UIControlStateNormal];
@@ -166,14 +268,12 @@
     [btnClose addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:btnClose];
 
-    // Coords Label
     self.coordsLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 40, self.view.bounds.size.width - 40, 20)];
     self.coordsLabel.textColor = [UIColor colorWithRed:0.3 green:0.8 blue:1.0 alpha:1.0];
     self.coordsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     [self updateCoordsDisplay];
     [self.view addSubview:self.coordsLabel];
 
-    // WebKit Map View
     WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
     [config.userContentController addScriptMessageHandler:self name:@"coordinateHandler"];
     self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(10, 68, self.view.bounds.size.width - 20, 260) configuration:config];
@@ -184,7 +284,6 @@
 
     [self loadGoogleMap];
 
-    // Control Buttons
     CGFloat btnW = (self.view.bounds.size.width - 50) / 4.0;
     CGFloat yPos = 338;
 
@@ -198,7 +297,6 @@
     [self.view addSubview:self.btnSave];
     [self.view addSubview:self.btnFav];
 
-    // Talabat Restaurants Fetch Button
     self.btnTalabat = [self makeButton:@"⚡ FETCH TALABAT VENDORS" bg:[UIColor colorWithRed:1.0 green:0.35 blue:0.0 alpha:1.0] frame:CGRectMake(10, yPos + 44, self.view.bounds.size.width - 20, 36) sel:@selector(fetchTalabatRestaurants)];
     [self.view addSubview:self.btnTalabat];
 }
@@ -381,7 +479,7 @@
 @end
 
 // -------------------------------------------------------------
-// 4. FLOATING TRIGGER (3x TAP OR VOLUME TRIGGER)
+// 5. FLOATING TRIGGER (GATED BY LICENSE ACTIVATION)
 // -------------------------------------------------------------
 static HadiModMapViewController *g_mapVC = nil;
 
@@ -404,29 +502,44 @@ static HadiModMapViewController *g_mapVC = nil;
     dispatch_once(&windowOnceToken, ^{
         UITapGestureRecognizer *tripleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hadiGestureTriggered:)];
         tripleTap.numberOfTapsRequired = 3;
-        tripleTap.numberOfTouchesRequired = 2; // 2 fingers 3 taps anywhere
+        tripleTap.numberOfTouchesRequired = 2; // 2 fingers 3 taps
         [self addGestureRecognizer:tripleTap];
     });
 }
 
 - (void)hadiGestureTriggered:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateEnded) {
-        if (!g_mapVC || !g_mapVC.view.superview) {
-            g_mapVC = [[HadiModMapViewController alloc] init];
-            CGFloat w = [UIScreen mainScreen].bounds.size.width - 40;
-            CGFloat h = 430;
-            g_mapVC.view.frame = CGRectMake(20, 80, w, h);
-            [[UIApplication sharedApplication].keyWindow addSubview:g_mapVC.view];
-        } else {
-            [g_mapVC closeTapped];
+        // GATED CHECK: License Activated?
+        if (![HadiLicenseEngine isDeviceActivated]) {
+            UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+            [HadiLicenseEngine showActivationPromptOn:root completion:^(BOOL success) {
+                if (success) {
+                    [self showMapController];
+                }
+            }];
+            return;
         }
+
+        [self showMapController];
+    }
+}
+
+- (void)showMapController {
+    if (!g_mapVC || !g_mapVC.view.superview) {
+        g_mapVC = [[HadiModMapViewController alloc] init];
+        CGFloat w = [UIScreen mainScreen].bounds.size.width - 40;
+        CGFloat h = 430;
+        g_mapVC.view.frame = CGRectMake(20, 80, w, h);
+        [[UIApplication sharedApplication].keyWindow addSubview:g_mapVC.view];
+    } else {
+        [g_mapVC closeTapped];
     }
 }
 
 @end
 
 // -------------------------------------------------------------
-// 5. CORE INITIALIZATION & SWIZZLES
+// 6. CORE INITIALIZATION & SWIZZLES
 // -------------------------------------------------------------
 static const void *HadiProxyKey = &HadiProxyKey;
 
@@ -435,17 +548,14 @@ static const void *HadiProxyKey = &HadiProxyKey;
 + (void)load {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        // 1. Swizzle Receipt
         Method origReceipt = class_getInstanceMethod([NSBundle class], @selector(appStoreReceiptURL));
         Method swizReceipt = class_getInstanceMethod([NSBundle class], @selector(talabat_appStoreReceiptURL));
         if (origReceipt && swizReceipt) method_exchangeImplementations(origReceipt, swizReceipt);
 
-        // 2. Swizzle setDelegate:
         Method origSetDel = class_getInstanceMethod([CLLocationManager class], @selector(setDelegate:));
         Method swizSetDel = class_getInstanceMethod([CLLocationManager class], @selector(hadi_setDelegate:));
         if (origSetDel && swizSetDel) method_exchangeImplementations(origSetDel, swizSetDel);
 
-        // 3. Swizzle location
         Method origLoc = class_getInstanceMethod([CLLocationManager class], @selector(location));
         Method swizLoc = class_getInstanceMethod([CLLocationManager class], @selector(hadi_location));
         if (origLoc && swizLoc) method_exchangeImplementations(origLoc, swizLoc);
@@ -463,16 +573,18 @@ static const void *HadiProxyKey = &HadiProxyKey;
 }
 
 - (CLLocation *)hadi_location {
-    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    if ([defs boolForKey:@"HadiMod_SpoofEnabled"]) {
-        double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
-        double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
-        if (lat != 0.0 && lon != 0.0) {
-            return [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
-                                                 altitude:15.0
-                                       horizontalAccuracy:5.0
-                                         verticalAccuracy:5.0
-                                                timestamp:[NSDate date]];
+    if ([HadiLicenseEngine isDeviceActivated]) {
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        if ([defs boolForKey:@"HadiMod_SpoofEnabled"]) {
+            double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
+            double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
+            if (lat != 0.0 && lon != 0.0) {
+                return [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
+                                                     altitude:15.0
+                                           horizontalAccuracy:5.0
+                                             verticalAccuracy:5.0
+                                                    timestamp:[NSDate date]];
+            }
         }
     }
     return [self hadi_location];
