@@ -6,6 +6,9 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 
+// -------------------------------------------------------------
+// 1. TALABAT UNAUTHORIZED APP STORE RECEIPT BYPASS
+// -------------------------------------------------------------
 @interface NSBundle (TalabatAuthorizedBypass)
 - (NSURL *)talabat_appStoreReceiptURL;
 @end
@@ -27,6 +30,9 @@
 }
 @end
 
+// -------------------------------------------------------------
+// 2. HARDENED CLDelegateProxy (Full Protocol Integrity)
+// -------------------------------------------------------------
 @interface HadiCLDelegateProxy : NSObject <CLLocationManagerDelegate>
 @property (nonatomic, weak) id<CLLocationManagerDelegate> realDelegate;
 @property (nonatomic, weak) CLLocationManager *mgr;
@@ -94,8 +100,334 @@
     }
 }
 
+- (void)locationManager:(CLLocationManager *)manager didUpdateToLocation:(CLLocation *)newLocation fromLocation:(CLLocation *)oldLocation {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    if ([defs boolForKey:@"HadiMod_SpoofEnabled"]) {
+        double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
+        double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
+        if (lat != 0.0 && lon != 0.0) {
+            newLocation = [[CLLocation alloc] initWithCoordinate:CLLocationCoordinate2DMake(lat, lon)
+                                                        altitude:15.0
+                                              horizontalAccuracy:5.0
+                                                verticalAccuracy:5.0
+                                                       timestamp:[NSDate date]];
+        }
+    }
+    if ([_realDelegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
+        [_realDelegate locationManager:manager didUpdateToLocation:newLocation fromLocation:oldLocation];
+    }
+}
+
 @end
 
+// -------------------------------------------------------------
+// 3. HADI MOD MAP CONTROLLER & LEAFLET MAP UI
+// -------------------------------------------------------------
+@interface HadiModMapViewController : UIViewController <WKScriptMessageHandler, WKNavigationDelegate>
+@property (nonatomic, strong) WKWebView *webView;
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UILabel *coordsLabel;
+@property (nonatomic, strong) UIButton *btnSpoof;
+@property (nonatomic, strong) UIButton *btnNormal;
+@property (nonatomic, strong) UIButton *btnSave;
+@property (nonatomic, strong) UIButton *btnFav;
+@property (nonatomic, strong) UIButton *btnTalabat;
+@property (nonatomic, assign) double currentLat;
+@property (nonatomic, assign) double currentLon;
+@property (nonatomic, assign) BOOL isFetchingTalabat;
+@end
+
+@implementation HadiModMapViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.08 blue:0.10 alpha:0.95];
+    self.view.layer.cornerRadius = 16.0;
+    self.view.clipsToBounds = YES;
+
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    self.currentLat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
+    self.currentLon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
+    if (self.currentLat == 0.0) self.currentLat = 25.2048; // Default Dubai
+    if (self.currentLon == 0.0) self.currentLon = 55.2708;
+
+    // Header Title
+    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 15, 250, 24)];
+    self.titleLabel.text = @"HADI MOD GPS CONTROLLER";
+    self.titleLabel.textColor = [UIColor whiteColor];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [self.view addSubview:self.titleLabel];
+
+    // Close Button
+    UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeSystem];
+    btnClose.frame = CGRectMake(self.view.bounds.size.width - 45, 12, 30, 30);
+    [btnClose setTitle:@"✕" forState:UIControlStateNormal];
+    [btnClose setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [btnClose addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:btnClose];
+
+    // Coords Label
+    self.coordsLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 40, self.view.bounds.size.width - 40, 20)];
+    self.coordsLabel.textColor = [UIColor colorWithRed:0.3 green:0.8 blue:1.0 alpha:1.0];
+    self.coordsLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [self updateCoordsDisplay];
+    [self.view addSubview:self.coordsLabel];
+
+    // WebKit Map View
+    WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+    [config.userContentController addScriptMessageHandler:self name:@"coordinateHandler"];
+    self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(10, 68, self.view.bounds.size.width - 20, 260) configuration:config];
+    self.webView.navigationDelegate = self;
+    self.webView.layer.cornerRadius = 12.0;
+    self.webView.clipsToBounds = YES;
+    [self.view addSubview:self.webView];
+
+    [self loadGoogleMap];
+
+    // Control Buttons
+    CGFloat btnW = (self.view.bounds.size.width - 50) / 4.0;
+    CGFloat yPos = 338;
+
+    self.btnSpoof = [self makeButton:@"SPOOF" bg:[UIColor colorWithRed:0.1 green:0.7 blue:0.3 alpha:1.0] frame:CGRectMake(10, yPos, btnW, 36) sel:@selector(startSpoofTapped)];
+    self.btnNormal = [self makeButton:@"REAL" bg:[UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0] frame:CGRectMake(20 + btnW, yPos, btnW, 36) sel:@selector(stopSpoofTapped)];
+    self.btnSave = [self makeButton:@"+ PIN" bg:[UIColor colorWithRed:0.2 green:0.4 blue:0.8 alpha:1.0] frame:CGRectMake(30 + btnW * 2, yPos, btnW, 36) sel:@selector(savePinTapped)];
+    self.btnFav = [self makeButton:@"FAVS" bg:[UIColor colorWithRed:0.5 green:0.3 blue:0.7 alpha:1.0] frame:CGRectMake(40 + btnW * 3, yPos, btnW, 36) sel:@selector(openFavoritesTapped)];
+
+    [self.view addSubview:self.btnSpoof];
+    [self.view addSubview:self.btnNormal];
+    [self.view addSubview:self.btnSave];
+    [self.view addSubview:self.btnFav];
+
+    // Talabat Restaurants Fetch Button
+    self.btnTalabat = [self makeButton:@"⚡ FETCH TALABAT VENDORS" bg:[UIColor colorWithRed:1.0 green:0.35 blue:0.0 alpha:1.0] frame:CGRectMake(10, yPos + 44, self.view.bounds.size.width - 20, 36) sel:@selector(fetchTalabatRestaurants)];
+    [self.view addSubview:self.btnTalabat];
+}
+
+- (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg frame:(CGRect)frame sel:(SEL)sel {
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+    btn.frame = frame;
+    [btn setTitle:title forState:UIControlStateNormal];
+    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    btn.backgroundColor = bg;
+    btn.layer.cornerRadius = 8.0;
+    [btn addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    return btn;
+}
+
+- (void)updateCoordsDisplay {
+    self.coordsLabel.text = [NSString stringWithFormat:@"Lat: %.5f | Lon: %.5f", self.currentLat, self.currentLon];
+}
+
+- (void)loadGoogleMap {
+    NSString *html = [NSString stringWithFormat:
+        @"<!DOCTYPE html><html><head>"
+        @"<meta name='viewport' content='initial-scale=1.0, user-scalable=no, width=device-width' />"
+        @"<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />"
+        @"<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>"
+        @"<style>html, body, #map { height: 100%%; width: 100%%; margin: 0; padding: 0; background-color: #121417; }"
+        @".leaflet-popup-content-wrapper { background: #1c1f26; color: #fff; border-radius: 8px; font-weight: bold; font-size: 13px; }"
+        @".leaflet-popup-tip { background: #1c1f26; }</style></head><body>"
+        @"<div id='map'></div><script>"
+        @"var map = L.map('map', { zoomControl: false }).setView([%f, %f], 14);"
+        @"L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: 'Hadi Mod' }).addTo(map);"
+        @"var mainMarker = L.marker([%f, %f], { draggable: true }).addTo(map);"
+        @"mainMarker.bindPopup('Target Location').openPopup();"
+        @"mainMarker.on('dragend', function(e) { var c = mainMarker.getLatLng(); window.webkit.messageHandlers.coordinateHandler.postMessage({ lat: c.lat, lng: c.lng }); });"
+        @"map.on('click', function(e) { mainMarker.setLatLng(e.latlng); window.webkit.messageHandlers.coordinateHandler.postMessage({ lat: e.latlng.lat, lng: e.latlng.lng }); });"
+        @"var talabatLayer = L.layerGroup().addTo(map);"
+        @"window.renderTalabatMarkers = function(list) {"
+        @"  talabatLayer.clearLayers();"
+        @"  list.forEach(function(item) {"
+        @"    var m = L.circleMarker([item.lat, item.lng], { radius: 6, fillColor: '#ff5a00', color: '#ffffff', weight: 1.5, opacity: 1, fillOpacity: 0.9 }).addTo(talabatLayer);"
+        @"    m.bindPopup('<b>' + item.name + '</b>');"
+        @"  });"
+        @"};"
+        @"window.centerToCoord = function(lat, lng) { mainMarker.setLatLng([lat, lng]); map.setView([lat, lng], 15); };"
+        @"</script></body></html>",
+        self.currentLat, self.currentLon, self.currentLat, self.currentLon];
+
+    [self.webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://osm.org"]];
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.name isEqualToString:@"coordinateHandler"] && [message.body isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = (NSDictionary *)message.body;
+        self.currentLat = [dict[@"lat"] doubleValue];
+        self.currentLon = [dict[@"lng"] doubleValue];
+        [self updateCoordsDisplay];
+    }
+}
+
+- (void)startSpoofTapped {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    [defs setBool:YES forKey:@"HadiMod_SpoofEnabled"];
+    [defs setDouble:self.currentLat forKey:@"HadiMod_SpoofLatitude"];
+    [defs setDouble:self.currentLon forKey:@"HadiMod_SpoofLongitude"];
+    [defs synchronize];
+    [self showToast:@"GPS Spoofing Started!"];
+}
+
+- (void)stopSpoofTapped {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    [defs setBool:NO forKey:@"HadiMod_SpoofEnabled"];
+    [defs synchronize];
+    [self showToast:@"GPS Returned to Real Normal"];
+}
+
+- (void)savePinTapped {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Save Coordinate"
+                                                                   message:@"Enter a name for this location pin:"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"e.g. Dubai Mall / Station 1"; }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *name = alert.textFields.firstObject.text;
+        if (!name.length) name = [NSString stringWithFormat:@"Pin %.4f, %.4f", self.currentLat, self.currentLon];
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        NSMutableArray *favs = [[defs arrayForKey:@"HadiModSavedFavorites"] mutableCopy] ?: [NSMutableArray array];
+        [favs addObject:@{ @"name": name, @"lat": @(self.currentLat), @"lng": @(self.currentLon) }];
+        [defs setObject:favs forKey:@"HadiModSavedFavorites"];
+        [defs synchronize];
+        [self showToast:[NSString stringWithFormat:@"Saved: %@", name]];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)openFavoritesTapped {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    NSArray *favs = [defs arrayForKey:@"HadiModSavedFavorites"];
+    if (!favs.count) {
+        [self showToast:@"No saved favorites yet!"];
+        return;
+    }
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Saved Favorites" message:@"Select a coordinate to jump:" preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSDictionary *item in favs) {
+        NSString *title = [NSString stringWithFormat:@"%@ (%.4f, %.4f)", item[@"name"], [item[@"lat"] doubleValue], [item[@"lng"] doubleValue]];
+        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            self.currentLat = [item[@"lat"] doubleValue];
+            self.currentLon = [item[@"lng"] doubleValue];
+            [self updateCoordsDisplay];
+            NSString *js = [NSString stringWithFormat:@"if (window.centerToCoord) { window.centerToCoord(%f, %f); }", self.currentLat, self.currentLon];
+            [self.webView evaluateJavaScript:js completionHandler:nil];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)fetchTalabatRestaurants {
+    if (self.isFetchingTalabat) return;
+    self.isFetchingTalabat = YES;
+    [self showToast:@"Fetching Talabat restaurants..."];
+
+    NSString *urlStr = [NSString stringWithFormat:@"https://vendors.talabat.com/vendor-list/v1/composite-list/%.6f/%.6f?page=1&size=500", self.currentLat, self.currentLon];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+    req.HTTPMethod = @"GET";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.isFetchingTalabat = NO;
+            if (err || !data) {
+                [self showToast:@"Failed to fetch restaurants"];
+                return;
+            }
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            NSArray *vendors = json[@"vendors"] ?: json[@"items"] ?: json[@"data"];
+            if (![vendors isKindOfClass:[NSArray class]] || !vendors.count) {
+                [self showToast:@"No restaurants found here"];
+                return;
+            }
+            NSMutableArray *markers = [NSMutableArray array];
+            for (NSDictionary *v in vendors) {
+                NSString *name = v[@"name"] ?: v[@"title"] ?: @"Restaurant";
+                NSDictionary *loc = v[@"location"];
+                double vLat = [loc[@"latitude"] ?: loc[@"lat"] doubleValue];
+                double vLng = [loc[@"longitude"] ?: loc[@"lng"] doubleValue];
+                if (vLat != 0.0 && vLng != 0.0) {
+                    name = [name stringByReplacingOccurrencesOfString:@"'" withString:@"\\'"];
+                    name = [name stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+                    [markers addObject:@{ @"name": name, @"lat": @(vLat), @"lng": @(vLng) }];
+                }
+            }
+            NSData *jsonData = [NSJSONSerialization dataWithJSONObject:markers options:0 error:nil];
+            NSString *jsonStr = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+            NSString *js = [NSString stringWithFormat:@"if (window.renderTalabatMarkers) { window.renderTalabatMarkers(%@); }", jsonStr];
+            [self.webView evaluateJavaScript:js completionHandler:nil];
+            [self showToast:[NSString stringWithFormat:@"Loaded %lu Restaurants!", (unsigned long)markers.count]];
+        });
+    }] resume];
+}
+
+- (void)showToast:(NSString *)msg {
+    UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(20, self.view.bounds.size.height - 40, self.view.bounds.size.width - 40, 24)];
+    toast.text = msg;
+    toast.textColor = [UIColor whiteColor];
+    toast.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.8];
+    toast.textAlignment = NSTextAlignmentCenter;
+    toast.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    toast.layer.cornerRadius = 6;
+    toast.clipsToBounds = YES;
+    [self.view addSubview:toast];
+    [UIView animateWithDuration:0.3 delay:1.8 options:0 animations:^{ toast.alpha = 0; } completion:^(BOOL f) { [toast removeFromSuperview]; }];
+}
+
+- (void)closeTapped {
+    [self.view removeFromSuperview];
+    [self removeFromParentViewController];
+}
+
+@end
+
+// -------------------------------------------------------------
+// 4. FLOATING TRIGGER (3x TAP OR VOLUME TRIGGER)
+// -------------------------------------------------------------
+static HadiModMapViewController *g_mapVC = nil;
+
+@implementation UIWindow (HadiGesture)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Method origMake = class_getInstanceMethod([UIWindow class], @selector(makeKeyAndVisible));
+        Method swizMake = class_getInstanceMethod([UIWindow class], @selector(hadi_makeKeyAndVisible));
+        if (origMake && swizMake) {
+            method_exchangeImplementations(origMake, swizMake);
+        }
+    });
+}
+
+- (void)hadi_makeKeyAndVisible {
+    [self hadi_makeKeyAndVisible];
+    static dispatch_once_t windowOnceToken;
+    dispatch_once(&windowOnceToken, ^{
+        UITapGestureRecognizer *tripleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hadiGestureTriggered:)];
+        tripleTap.numberOfTapsRequired = 3;
+        tripleTap.numberOfTouchesRequired = 2; // 2 fingers 3 taps anywhere
+        [self addGestureRecognizer:tripleTap];
+    });
+}
+
+- (void)hadiGestureTriggered:(UITapGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateEnded) {
+        if (!g_mapVC || !g_mapVC.view.superview) {
+            g_mapVC = [[HadiModMapViewController alloc] init];
+            CGFloat w = [UIScreen mainScreen].bounds.size.width - 40;
+            CGFloat h = 430;
+            g_mapVC.view.frame = CGRectMake(20, 80, w, h);
+            [[UIApplication sharedApplication].keyWindow addSubview:g_mapVC.view];
+        } else {
+            [g_mapVC closeTapped];
+        }
+    }
+}
+
+@end
+
+// -------------------------------------------------------------
+// 5. CORE INITIALIZATION & SWIZZLES
+// -------------------------------------------------------------
 static const void *HadiProxyKey = &HadiProxyKey;
 
 @implementation CLLocationManager (HadiTalabatHook)
@@ -103,23 +435,20 @@ static const void *HadiProxyKey = &HadiProxyKey;
 + (void)load {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+        // 1. Swizzle Receipt
         Method origReceipt = class_getInstanceMethod([NSBundle class], @selector(appStoreReceiptURL));
         Method swizReceipt = class_getInstanceMethod([NSBundle class], @selector(talabat_appStoreReceiptURL));
-        if (origReceipt && swizReceipt) {
-            method_exchangeImplementations(origReceipt, swizReceipt);
-        }
+        if (origReceipt && swizReceipt) method_exchangeImplementations(origReceipt, swizReceipt);
 
+        // 2. Swizzle setDelegate:
         Method origSetDel = class_getInstanceMethod([CLLocationManager class], @selector(setDelegate:));
         Method swizSetDel = class_getInstanceMethod([CLLocationManager class], @selector(hadi_setDelegate:));
-        if (origSetDel && swizSetDel) {
-            method_exchangeImplementations(origSetDel, swizSetDel);
-        }
+        if (origSetDel && swizSetDel) method_exchangeImplementations(origSetDel, swizSetDel);
 
+        // 3. Swizzle location
         Method origLoc = class_getInstanceMethod([CLLocationManager class], @selector(location));
         Method swizLoc = class_getInstanceMethod([CLLocationManager class], @selector(hadi_location));
-        if (origLoc && swizLoc) {
-            method_exchangeImplementations(origLoc, swizLoc);
-        }
+        if (origLoc && swizLoc) method_exchangeImplementations(origLoc, swizLoc);
     });
 }
 
