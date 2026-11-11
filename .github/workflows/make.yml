@@ -25,6 +25,8 @@ jobs:
         run: |
           rm -rf $HOME/theos/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $HOME/theos/sdks
+          # Remove iOS 15+ SDKs so Theos cleanly uses iOS 14.5
+          rm -rf $HOME/theos/sdks/iPhoneOS15* $HOME/theos/sdks/iPhoneOS16* $HOME/theos/sdks/iPhoneOS17*
 
       - name: Install Linux iOS Toolchain (Clang)
         run: |
@@ -40,13 +42,12 @@ jobs:
         run: |
           export THEOS=$HOME/theos
           make clean
-          make
+          make FINALPACKAGE=1
 
       - name: Locate Built Files
         run: |
           mkdir -p output
-          find . -name "*.dylib" -exec cp {} output/ \;
-          find . -name "*.deb" -exec cp {} output/ \;
+          find .theos/ -name "*.dylib" -exec cp {} output/ \;
           ls -la output/
 
       - name: Upload Ready Artifacts
