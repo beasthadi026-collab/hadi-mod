@@ -8,3 +8,4 @@ $(MODULE_NAME)_LDFLAGS := -install_name @rpath/libR6X9.dylib
 
 include $(THEOS)/makefiles/common.mk
 include $(THEOS_MAKE_PATH)/tweak.mk
+
