@@ -1,13 +1,13 @@
 // ============================================================================
 //            HADI TALABAT RIDER TWEAK — PRODUCTION BUILD (Tweak.x)
 //    - AppStore Receipt Bypass (Bypasses "Unauthorized rider app")
-//    - 100% Strict 1:1 Hardware Lock (Key Binds to Device on First Activation)
-//    - Native Apple MKMapView (Zero API Key, Zero Web Blocks, 100% Guaranteed Map)
+//    - Real-Time VPS Panel Hardware Lock (1:1 Key Bound to Device HWID on Panel)
+//    - Google Maps JavaScript Engine (Powered by Google API Key)
 // ============================================================================
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
-#import <MapKit/MapKit.h>
+#import <WebKit/WebKit.h>
 #import <Security/Security.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
@@ -38,19 +38,18 @@
 @end
 
 // -------------------------------------------------------------
-// 2. HARDWARE KEY BINDING ENGINE (Keychain Hardware Persistence)
+// 2. REAL-TIME SERVER HARDWARE LOCK ENGINE (VPS Panel Binding)
 // -------------------------------------------------------------
 @interface HadiLicenseEngine : NSObject
 + (BOOL)isDeviceActivated;
 + (NSString *)getDeviceHardwareFingerprint;
-+ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err;
++ (void)validateAndBindKey:(NSString *)enteredKey completion:(void(^)(BOOL success, NSString *errorMsg))completion;
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion;
 @end
 
 @implementation HadiLicenseEngine
 
 + (NSString *)getDeviceHardwareFingerprint {
-    // Unique hardware ID generated per physical iPhone device, persists in standard storage
     NSString *uuid = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
     if (!uuid.length) {
         uuid = @"HADI-IPHONE-HARDWARE-ID";
@@ -69,37 +68,44 @@
     return YES;
 }
 
-+ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err {
++ (void)validateAndBindKey:(NSString *)enteredKey completion:(void(^)(BOOL success, NSString *errorMsg))completion {
     NSString *cleanKey = [enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].uppercaseString;
-    
-    // Panel Key Format check: Must start with VIP- and have correct length (e.g. VIP-8030-802E-30)
-    if (![cleanKey hasPrefix:@"VIP-"] || cleanKey.length < 14) {
-        if (err) *err = @"Invalid Key Format! Key must start with VIP-";
-        return NO;
+    if (cleanKey.length < 8) {
+        if (completion) completion(NO, @"Invalid Key Length!");
+        return;
     }
 
     NSString *deviceFp = [self getDeviceHardwareFingerprint];
-    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
 
-    // Check if this key was already bound to any device
-    NSString *existingKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
-    NSString *existingDev = [defs stringForKey:@"HadiMod_BoundDevice"];
+    // Connect to VPS Server Live Bind Route
+    NSString *urlStr = [NSString stringWithFormat:@"https://203.175.11.15.nip.io/admin/bind_dylib?key=%@&hwid=%@", cleanKey, deviceFp];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:10.0];
+    [req setHTTPMethod:@"GET"];
 
-    if (existingKey && [existingKey isEqualToString:cleanKey]) {
-        if ([existingDev isEqualToString:deviceFp]) {
-            return YES; // Already valid on this device
-        } else {
-            if (err) *err = @"Key is locked to another iPhone! (Device Mismatch)";
-            return NO;
-        }
-    }
+    NSURLSession *session = [NSURLSession sharedSession];
+    [[session dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (error || !data) {
+                if (completion) completion(NO, @"Cannot reach license server. Check internet!");
+                return;
+            }
 
-    // First time activating this VIP panel key on THIS iPhone:
-    // Permanently lock the key to this device's hardware identity
-    [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
-    [defs setObject:deviceFp forKey:@"HadiMod_BoundDevice"];
-    [defs synchronize];
-    return YES;
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            BOOL success = [json[@"success"] boolValue];
+            if (success) {
+                // Key is officially bound to this phone on the panel
+                NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+                [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
+                [defs setObject:deviceFp forKey:@"HadiMod_BoundDevice"];
+                [defs synchronize];
+                if (completion) completion(YES, nil);
+            } else {
+                NSString *err = json[@"error"] ?: @"Key is locked to another iPhone!";
+                if (completion) completion(NO, err);
+            }
+        });
+    }] resume];
 }
 
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion {
@@ -108,7 +114,7 @@
     }
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚡ HADI DYLIB ACTIVATION"
-                                                                   message:@"Enter the VIP key generated from your VPS panel."
+                                                                   message:@"Enter your VIP license key generated from the panel."
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
@@ -119,24 +125,25 @@
 
     UIAlertAction *activateAction = [UIAlertAction actionWithTitle:@"Activate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         NSString *key = alert.textFields.firstObject.text;
-        NSString *errorMsg = nil;
-        if ([self validateKey:key error:&errorMsg]) {
-            UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"Activated!"
-                                                                          message:@"Key activated and locked to this iPhone."
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-            [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
-                if (completion) completion(YES);
-            }]];
-            [vc presentViewController:succ animated:YES completion:nil];
-        } else {
-            UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"Activation Failed"
-                                                                          message:errorMsg ?: @"Key is invalid."
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-            [fail addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
-                [self showActivationPromptOn:vc completion:completion];
-            }]];
-            [vc presentViewController:fail animated:YES completion:nil];
-        }
+        [self validateAndBindKey:key completion:^(BOOL success, NSString *errorMsg) {
+            if (success) {
+                UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"Activated!"
+                                                                              message:@"Key successfully bound to this iPhone on the server."
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+                [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+                    if (completion) completion(YES);
+                }]];
+                [vc presentViewController:succ animated:YES completion:nil];
+            } else {
+                UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"Activation Failed"
+                                                                              message:errorMsg ?: @"Key is invalid or locked to another device."
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+                [fail addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+                    [self showActivationPromptOn:vc completion:completion];
+                }]];
+                [vc presentViewController:fail animated:YES completion:nil];
+            }
+        }];
     }];
 
     [alert addAction:activateAction];
@@ -207,13 +214,10 @@
 @end
 
 // -------------------------------------------------------------
-// 4. NATIVE APPLE MKMAPVIEW CONTROLLER (No API Key Required)
+// 4. GOOGLE MAPS CONTROLLER (Direct API Integration)
 // -------------------------------------------------------------
-static NSString *const kHadiPinIdentifier = @"HadiPinIdentifier";
-
-@interface HadiModMapViewController : UIViewController <MKMapViewDelegate>
-@property (nonatomic, strong) MKMapView *mapView;
-@property (nonatomic, strong) MKPointAnnotation *pin;
+@interface HadiModMapViewController : UIViewController <WKNavigationDelegate, WKScriptMessageHandler>
+@property (nonatomic, strong) WKWebView *webView;
 @property (nonatomic, strong) UIButton *btnToggle;
 @property (nonatomic, strong) UIButton *btnTalabat;
 @property (nonatomic, assign) BOOL isSpoofing;
@@ -224,10 +228,10 @@ static NSString *const kHadiPinIdentifier = @"HadiPinIdentifier";
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.96];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.96];
     self.view.layer.cornerRadius = 18.0;
     self.view.layer.masksToBounds = YES;
-    self.view.layer.borderColor = [UIColor colorWithRed:0.0 green:0.8 blue:1.0 alpha:0.9].CGColor;
+    self.view.layer.borderColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:0.9].CGColor;
     self.view.layer.borderWidth = 1.5;
 
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
@@ -235,55 +239,84 @@ static NSString *const kHadiPinIdentifier = @"HadiPinIdentifier";
     double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
     double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
     if (lat == 0.0 && lon == 0.0) {
-        lat = 25.2048; // Default Dubai
+        lat = 25.2048; // Dubai Center
         lon = 55.2708;
     }
     self.currentCoords = CLLocationCoordinate2DMake(lat, lon);
 
-    // Native iOS Apple MapView
-    self.mapView = [[MKMapView alloc] initWithFrame:CGRectMake(10, 50, self.view.bounds.size.width - 20, 310)];
-    self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.mapView.layer.cornerRadius = 12.0;
-    self.mapView.layer.masksToBounds = YES;
-    self.mapView.delegate = self;
-    self.mapView.showsUserLocation = NO;
-    [self.view addSubview:self.mapView];
+    WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+    [config.userContentController addScriptMessageHandler:self name:@"hadiLocationHandler"];
 
-    // Add Target Pin
-    self.pin = [[MKPointAnnotation alloc] init];
-    self.pin.coordinate = self.currentCoords;
-    self.pin.title = @"Target Pin";
-    [self.mapView addAnnotation:self.pin];
-
-    // Set Map Center
-    MKCoordinateRegion region = MKCoordinateRegionMakeWithDistance(self.currentCoords, 2000, 2000);
-    [self.mapView setRegion:region animated:NO];
-
-    // Tap Gesture to move pin on map
-    UITapGestureRecognizer *mapTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(mapTapped:)];
-    [self.mapView addGestureRecognizer:mapTap];
+    self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(10, 50, self.view.bounds.size.width - 20, 310) configuration:config];
+    self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.webView.layer.cornerRadius = 12.0;
+    self.webView.layer.masksToBounds = YES;
+    self.webView.navigationDelegate = self;
+    [self.view addSubview:self.webView];
 
     [self setupControls];
+    [self loadGoogleMapsWithLat:lat lon:lon];
 }
 
-- (void)mapTapped:(UITapGestureRecognizer *)gesture {
-    CGPoint point = [gesture locationInView:self.mapView];
-    CLLocationCoordinate2D coord = [self.mapView convertPoint:point toCoordinateFromView:self.mapView];
-    self.currentCoords = coord;
-    self.pin.coordinate = coord;
+- (void)loadGoogleMapsWithLat:(double)lat lon:(double)lon {
+    NSString *apiKey = @"AIzaSyCNSBu4Vp9Ip6elthoLwAuxRAmLcoFWRHM";
+
+    NSString *html = [NSString stringWithFormat:
+        @"<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>"
+        @"<style>body,html,#map{margin:0;padding:0;height:100%%;width:100%%;background:#242f3e;}</style>"
+        @"<script src='https://maps.googleapis.com/maps/api/js?key=%@&callback=initMap' async defer></script>"
+        @"<script>"
+        @"var map, marker;"
+        @"function initMap() {"
+        @"  var pos = {lat: %f, lng: %f};"
+        @"  map = new google.maps.Map(document.getElementById('map'), {"
+        @"    center: pos,"
+        @"    zoom: 15,"
+        @"    disableDefaultUI: true,"
+        @"    zoomControl: false,"
+        @"    styles: ["
+        @"      {elementType: 'geometry', stylers: [{color: '#242f3e'}]},"
+        @"      {elementType: 'labels.text.stroke', stylers: [{color: '#242f3e'}]},"
+        @"      {elementType: 'labels.text.fill', stylers: [{color: '#746855'}]},"
+        @"      {featureType: 'road', elementType: 'geometry', stylers: [{color: '#38414e'}]},"
+        @"      {featureType: 'road', elementType: 'geometry.stroke', stylers: [{color: '#212a37'}]},"
+        @"      {featureType: 'water', elementType: 'geometry', stylers: [{color: '#17263c'}]}"
+        @"    ]"
+        @"  });"
+        @"  marker = new google.maps.Marker({"
+        @"    position: pos,"
+        @"    map: map,"
+        @"    draggable: true,"
+        @"    animation: google.maps.Animation.DROP"
+        @"  });"
+        @"  google.maps.event.addListener(marker, 'dragend', function(e) {"
+        @"    var lat = e.latLng.lat(); var lng = e.latLng.lng();"
+        @"    window.webkit.messageHandlers.hadiLocationHandler.postMessage({lat: lat, lng: lng});"
+        @"  });"
+        @"  google.maps.event.addListener(map, 'click', function(e) {"
+        @"    var lat = e.latLng.lat(); var lng = e.latLng.lng();"
+        @"    marker.setPosition(e.latLng);"
+        @"    window.webkit.messageHandlers.hadiLocationHandler.postMessage({lat: lat, lng: lng});"
+        @"  });"
+        @"}"
+        @"window.setMapCenter = function(lat, lng) {"
+        @"  var newPos = new google.maps.LatLng(lat, lng);"
+        @"  map.panTo(newPos);"
+        @"  marker.setPosition(newPos);"
+        @"};"
+        @"</script></head><body><div id='map'></div></body></html>",
+        apiKey, lat, lon];
+
+    [self.webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://maps.googleapis.com"]];
 }
 
-- (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
-    MKPinAnnotationView *pinView = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:kHadiPinIdentifier];
-    if (!pinView) {
-        pinView = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:kHadiPinIdentifier];
-        pinView.pinTintColor = [UIColor redColor];
-        pinView.animatesDrop = YES;
-        pinView.canShowCallout = YES;
-    } else {
-        pinView.annotation = annotation;
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.body isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = (NSDictionary *)message.body;
+        double lat = [dict[@"lat"] doubleValue];
+        double lon = [dict[@"lng"] doubleValue];
+        self.currentCoords = CLLocationCoordinate2DMake(lat, lon);
     }
-    return pinView;
 }
 
 - (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg frame:(CGRect)frame sel:(SEL)sel {
@@ -305,7 +338,7 @@ static NSString *const kHadiPinIdentifier = @"HadiPinIdentifier";
     [self.view addSubview:btnClose];
 
     UILabel *lblTitle = [[UILabel alloc] initWithFrame:CGRectMake(15, 10, 200, 30)];
-    lblTitle.text = @"⚡ HADI RIDER RADAR";
+    lblTitle.text = @"⚡ HADI GOOGLE RADAR";
     lblTitle.textColor = [UIColor whiteColor];
     lblTitle.font = [UIFont boldSystemFontOfSize:15];
     [self.view addSubview:lblTitle];
@@ -348,11 +381,7 @@ static NSString *const kHadiPinIdentifier = @"HadiPinIdentifier";
 }
 
 - (void)centerDubai {
-    CLLocationCoordinate2D dubai = CLLocationCoordinate2DMake(25.2048, 55.2708);
-    self.currentCoords = dubai;
-    self.pin.coordinate = dubai;
-    MKCoordinateRegion region = MKCoordinateRegionMakeWithDistance(dubai, 2500, 2500);
-    [self.mapView setRegion:region animated:YES];
+    [self.webView evaluateJavaScript:@"window.setMapCenter(25.2048, 55.2708);" completionHandler:nil];
 }
 
 - (void)closeTapped {
