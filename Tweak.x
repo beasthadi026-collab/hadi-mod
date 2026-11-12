@@ -68,7 +68,7 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
         dlclose(gestalt);
     }
 
-    // 2. Fallback to IOPlatformSerialNumber / Vendor UUID if jailbroken or restricted
+    // 2. Fallback to vendor UUID if MobileGestalt not available
     NSString *uuid = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
     return [uuid stringByReplacingOccurrencesOfString:@"-" withString:@""].uppercaseString;
 }
@@ -94,9 +94,7 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
     NSString *deviceUDID = [self getDevicePhysicalUDID];
 
     // Mathematical Hardware Validation:
-    // Panel format: VIP[days]-[part1]-[part2]-[part3]-[part4] or VIP-[part1]-[part2]-[days]
-    // Example: VIP-8160-000A-30 OR VIP30-A1B2-8160-000A-C3D4
-    // Check if the key contains the hardware chunks of this device's UDID:
+    // Panel format contains physical UDID chunks (e.g. VIP-8160-000A-30 or VIP30-...)
     NSString *udidHead = deviceUDID.length >= 4 ? [deviceUDID substringToIndex:4] : @"";
     NSString *udidTail = deviceUDID.length >= 4 ? [deviceUDID substringFromIndex:deviceUDID.length - 4] : @"";
     NSString *udidMid = deviceUDID.length >= 8 ? [deviceUDID substringWithRange:NSMakeRange(4, 4)] : @"";
@@ -226,6 +224,8 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
 // -------------------------------------------------------------
 // 4. NATIVE APPLE MKMAPVIEW CONTROLLER (No API Key Required)
 // -------------------------------------------------------------
+static NSString *const kHadiPinIdentifier = @"HadiPinIdentifier";
+
 @interface HadiModMapViewController : UIViewController <MKMapViewDelegate>
 @property (nonatomic, strong) MKMapView *mapView;
 @property (nonatomic, strong) MKPointAnnotation *pin;
@@ -289,10 +289,9 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
 }
 
 - (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
-    static NSString *pinID = @"HadiPin";
-    MKPinAnnotationView *pinView = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pinID];
+    MKPinAnnotationView *pinView = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:kHadiPinIdentifier];
     if (!pinView) {
-        pinView = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:pinID];
+        pinView = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:kHadiPinIdentifier];
         pinView.pinTintColor = [UIColor redColor];
         pinView.animatesDrop = YES;
         pinView.canShowCallout = YES;
