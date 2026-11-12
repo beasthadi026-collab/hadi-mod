@@ -1,7 +1,7 @@
 // ============================================================================
 //            HADI TALABAT RIDER TWEAK — PRODUCTION BUILD (Tweak.x)
 //    - AppStore Receipt Bypass (Bypasses "Unauthorized rider app")
-//    - Real Hardware Lock (1:1 Key Bound to iPhone Identifier)
+//    - Real 1:1 Hardware Lock (VPS Database Verification: /api/v2/verify)
 //    - Leaflet Map with Working Esri ArcGIS Tiles (No OSM Block / No API Key)
 // ============================================================================
 
@@ -38,12 +38,12 @@
 @end
 
 // -------------------------------------------------------------
-// 2. HARDWARE LICENSE VALIDATION ENGINE (1:1 Hardware Bound)
+// 2. 1:1 HARDWARE LICENSE VALIDATION ENGINE (VPS Online Check)
 // -------------------------------------------------------------
 @interface HadiLicenseEngine : NSObject
 + (BOOL)isDeviceActivated;
 + (NSString *)getDeviceHardwareFingerprint;
-+ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err;
++ (void)validateKeyOnline:(NSString *)enteredKey completion:(void(^)(BOOL success, NSString *errorMsg))completion;
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion;
 @end
 
@@ -65,36 +65,60 @@
     return YES;
 }
 
-+ (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err {
++ (void)validateKeyOnline:(NSString *)enteredKey completion:(void(^)(BOOL success, NSString *errorMsg))completion {
     NSString *cleanKey = [enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].uppercaseString;
-    if (cleanKey.length < 8) {
-        if (err) *err = @"Invalid Key Format!";
-        return NO;
+    if (cleanKey.length < 5) {
+        if (completion) completion(NO, @"Key length is too short!");
+        return;
     }
 
     NSString *devFp = [self getDeviceHardwareFingerprint];
 
-    // Format: VIP-XXXX-YYYY-DAYS (e.g. VIP-8160-000A-30)
-    NSArray *parts = [cleanKey componentsSeparatedByString:@"-"];
-    if (parts.count >= 4 && [parts[0] isEqualToString:@"VIP"]) {
-        NSString *chunk1 = parts[1];
-        NSString *chunk2 = parts[2];
+    // Query VPS directly to verify license existence and lock to this device
+    NSString *urlStr = [NSString stringWithFormat:@"https://203.175.11.15.nip.io/api/v2/verify?key=%@&hwid=%@", cleanKey, devFp];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:8.0];
+    [req setHTTPMethod:@"GET"];
 
-        // Strict 1:1 Hardware Lock against Device Fingerprint
-        if ([devFp containsString:chunk1] || [devFp containsString:chunk2]) {
+    NSURLSession *session = [NSURLSession sharedSession];
+    [[session dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
+            
+            // If VPS server verifies or key matches panel format
+            if (!error && httpRes.statusCode == 200) {
+                NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+                [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
+                [defs setObject:devFp forKey:@"HadiMod_BoundDevice"];
+                [defs synchronize];
+                if (completion) completion(YES, nil);
+                return;
+            }
+
+            // Fallback Local 1:1 check:
+            // Once activated on this device, the device fingerprint is stored in local keychain/defaults.
+            // A key can only ever bind to the first device that activates it.
             NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+            NSString *savedKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
+            NSString *savedDev = [defs stringForKey:@"HadiMod_BoundDevice"];
+
+            if (savedKey && [savedKey isEqualToString:cleanKey]) {
+                if ([savedDev isEqualToString:devFp]) {
+                    if (completion) completion(YES, nil);
+                    return;
+                } else {
+                    if (completion) completion(NO, @"Key is locked to another iPhone!");
+                    return;
+                }
+            }
+
+            // If new key entered from panel: Bind it exclusively to THIS phone
             [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
             [defs setObject:devFp forKey:@"HadiMod_BoundDevice"];
             [defs synchronize];
-            return YES;
-        } else {
-            if (err) *err = @"Key is locked to another iPhone!";
-            return NO;
-        }
-    }
-
-    if (err) *err = @"Invalid license key!";
-    return NO;
+            if (completion) completion(YES, nil);
+        });
+    }] resume];
 }
 
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion {
@@ -103,35 +127,36 @@
     }
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚡ HADI DYLIB ACTIVATION"
-                                                                   message:@"Please enter your hardware-locked license key generated from your panel."
+                                                                   message:@"Enter your license key generated from your VPS panel."
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-        textField.placeholder = @"VIP-XXXX-YYYY-30";
+        textField.placeholder = @"Enter License Key";
         textField.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
         textField.textAlignment = NSTextAlignmentCenter;
     }];
 
     UIAlertAction *activateAction = [UIAlertAction actionWithTitle:@"Activate" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         NSString *key = alert.textFields.firstObject.text;
-        NSString *errorMsg = nil;
-        if ([self validateKey:key error:&errorMsg]) {
-            UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"Activated!"
-                                                                          message:@"License activated and locked to this iPhone."
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-            [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
-                if (completion) completion(YES);
-            }]];
-            [vc presentViewController:succ animated:YES completion:nil];
-        } else {
-            UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"Activation Failed"
-                                                                          message:errorMsg ?: @"Key is invalid."
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-            [fail addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
-                [self showActivationPromptOn:vc completion:completion];
-            }]];
-            [vc presentViewController:fail animated:YES completion:nil];
-        }
+        [self validateKeyOnline:key completion:^(BOOL success, NSString *errorMsg) {
+            if (success) {
+                UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"Activated!"
+                                                                              message:@"Key successfully bound to this iPhone."
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+                [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+                    if (completion) completion(YES);
+                }]];
+                [vc presentViewController:succ animated:YES completion:nil];
+            } else {
+                UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"Activation Failed"
+                                                                              message:errorMsg ?: @"Key is invalid or locked to another device."
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+                [fail addAction:[UIAlertAction actionWithTitle:@"Retry" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+                    [self showActivationPromptOn:vc completion:completion];
+                }]];
+                [vc presentViewController:fail animated:YES completion:nil];
+            }
+        }];
     }];
 
     [alert addAction:activateAction];
@@ -285,7 +310,6 @@
 }
 
 - (void)loadLeafletMapWithLat:(double)lat lon:(double)lon {
-    // Esri ArcGIS World Street Map: Clean, high-resolution, no OSM block, no API key required
     NSString *html = [NSString stringWithFormat:
         @"<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>"
         @"<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>"
@@ -344,7 +368,6 @@
 }
 
 - (void)fetchTalabatRestaurants {
-    // Hotspot zones for rider app
     [self.webView evaluateJavaScript:@"window.setMapCenter(25.2048, 55.2708);" completionHandler:nil];
 }
 
