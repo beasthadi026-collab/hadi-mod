@@ -23,6 +23,7 @@ static NSString *const kCLS_PrefKey_TargetLon   = @"CLS_TargetLon";
 static NSString *const kCLS_PrefKey_LicenseKey  = @"CLS_SavedKey";
 static NSString *const kCLS_PrefKey_BoundDev    = @"CLS_BoundDev";
 static NSString *const kCLS_PrefKey_Favorites   = @"CLS_SavedFavorites";
+static NSString *const kCLS_FavCellIdentifier   = @"FavCell";
 
 static const void *kCLDelegateProxyKey = &kCLDelegateProxyKey;
 
@@ -456,10 +457,9 @@ static const void *kCLDelegateProxyKey = &kCLDelegateProxyKey;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    static NSString *cellId = @"FavCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kCLS_FavCellIdentifier];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:kCLS_FavCellIdentifier];
         cell.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.6];
         cell.textLabel.textColor = [UIColor whiteColor];
         cell.textLabel.font = [UIFont boldSystemFontOfSize:15];
