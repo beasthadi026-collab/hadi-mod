@@ -2,6 +2,8 @@
 //                    Tweak.x - TALABAT UNIFIED SAFE TWEAK
 //   - Clean Native Apple MapKit (Full-screen radar with Tap-to-Pin)
 //   - Branding: "HADI MOD X ERROR EXPERT" (Login & Map)
+//   - Trigger: 3 Fingers Double Tap (3 ungliyon se 2 baar tap kahin bhi screen par)
+//   - Floating button completely removed!
 //   - [▶ PLAY (MOVE)] and [⏹ STOP (REAL GPS)] instant toggle buttons
 //   - Auto-move while PLAY is active (single tap moves immediately)
 //   - Coordinate Save & Favorites Manager (Custom Name, Lat, Lon)
@@ -535,41 +537,35 @@ static NSString *CLS_GetDeviceHardwareIdentifier(void) {
     return @"IPHONE-DEVICE-HWID-01";
 }
 
-static void CLS_RemoveFloatingMenuButton(void) {
+// 3 Fingers Double Tap Gesture Installer (Floating Button Replaced)
+static void CLS_InstallDoubleTapGesture(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *window = [UIApplication sharedApplication].keyWindow;
         if (!window) {
             NSArray *windows = [UIApplication sharedApplication].windows;
             if (windows.count > 0) window = windows.firstObject;
         }
-        UIView *b = [window viewWithTag:998877];
-        if (b) [b removeFromSuperview];
-    });
-}
-
-static void CLS_ShowFloatingMenuButton(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *window = [UIApplication sharedApplication].keyWindow;
-        if (!window) {
-            NSArray *windows = [UIApplication sharedApplication].windows;
-            if (windows.count > 0) window = windows.firstObject;
+        if (!window) return;
+        
+        // Remove floating button if previously present
+        UIView *oldBtn = [window viewWithTag:998877];
+        if (oldBtn) [oldBtn removeFromSuperview];
+        
+        // Check if gesture already attached
+        for (UIGestureRecognizer *g in window.gestureRecognizers) {
+            if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
+                UITapGestureRecognizer *tg = (UITapGestureRecognizer *)g;
+                if (tg.numberOfTouchesRequired == 3 && tg.numberOfTapsRequired == 2) {
+                    return; // Already installed
+                }
+            }
         }
-        if (!window || [window viewWithTag:998877]) return;
         
-        UIButton *floatBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        floatBtn.tag = 998877;
-        floatBtn.frame = CGRectMake(20, 140, 52, 52);
-        floatBtn.layer.cornerRadius = 26;
-        floatBtn.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.95 alpha:0.9];
-        [floatBtn setTitle:@"📍" forState:UIControlStateNormal];
-        floatBtn.titleLabel.font = [UIFont systemFontOfSize:26];
-        floatBtn.layer.shadowColor = [UIColor blackColor].CGColor;
-        floatBtn.layer.shadowOpacity = 0.4;
-        floatBtn.layer.shadowRadius = 5;
-        floatBtn.layer.shadowOffset = CGSizeMake(0, 3);
-        
-        [floatBtn addTarget:[CLSViewController class] action:@selector(cls_presentRadarScreen) forControlEvents:UIControlEventTouchUpInside];
-        [window addSubview:floatBtn];
+        UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[CLSViewController class] action:@selector(cls_presentRadarScreen)];
+        doubleTap.numberOfTouchesRequired = 3; // 3 Fingers
+        doubleTap.numberOfTapsRequired = 2;    // 2 Taps (Double Tap)
+        doubleTap.cancelsTouchesInView = NO;
+        [window addGestureRecognizer:doubleTap];
     });
 }
 
@@ -612,7 +608,9 @@ static void CLS_VerifyAndBindLicense(void) {
                 [defs setBool:NO forKey:kCLS_PrefKey_SpoofActive];
                 [defs synchronize];
                 
-                CLS_RemoveFloatingMenuButton();
+                UIWindow *window = [UIApplication sharedApplication].keyWindow;
+                UIView *oldBtn = [window viewWithTag:998877];
+                if (oldBtn) [oldBtn removeFromSuperview];
                 
                 UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
                 if (root) {
@@ -636,11 +634,11 @@ static void CLS_VerifyAndBindLicense(void) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)res;
                     if (err) {
-                        CLS_ShowFloatingMenuButton();
+                        CLS_InstallDoubleTapGesture();
                         return;
                     }
                     if (httpRes.statusCode == 200) {
-                        CLS_ShowFloatingMenuButton();
+                        CLS_InstallDoubleTapGesture();
                     } else {
                         // Key expired or deleted from server! Revoke immediately:
                         [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
@@ -648,7 +646,9 @@ static void CLS_VerifyAndBindLicense(void) {
                         [defs setBool:NO forKey:kCLS_PrefKey_SpoofActive];
                         [defs synchronize];
                         
-                        CLS_RemoveFloatingMenuButton();
+                        UIWindow *window = [UIApplication sharedApplication].keyWindow;
+                        UIView *oldBtn = [window viewWithTag:998877];
+                        if (oldBtn) [oldBtn removeFromSuperview];
                         
                         UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
                         if (root) {
@@ -705,10 +705,10 @@ static void CLS_PromptKeyActivation(void) {
                     [defs synchronize];
                     
                     UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
-                                                                                  message:@"Key bound to this iPhone! Floating radar enabled."
+                                                                                  message:@"Key bound to this iPhone! Double tap with 3 fingers to open GPS."
                                                                            preferredStyle:UIAlertControllerStyleAlert];
                     [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-                        CLS_ShowFloatingMenuButton();
+                        CLS_InstallDoubleTapGesture();
                     }]];
                     [root presentViewController:succ animated:YES completion:nil];
                 } else {
