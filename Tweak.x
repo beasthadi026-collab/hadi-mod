@@ -2,12 +2,12 @@
 //            HADI TALABAT RIDER TWEAK — PRODUCTION BUILD (Tweak.x)
 //    - AppStore Receipt Bypass (Bypasses "Unauthorized rider app")
 //    - Real-Time VPS Panel Hardware Lock (1:1 Key Bound to Device HWID on Panel)
-//    - Google Maps JavaScript Engine (Powered by Google API Key)
+//    - Pure Native Apple MapKit (MKMapView) — Instant rendering, 100% reliable
 // ============================================================================
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
-#import <WebKit/WebKit.h>
+#import <MapKit/MapKit.h>
 #import <Security/Security.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
@@ -77,7 +77,6 @@
 
     NSString *deviceFp = [self getDeviceHardwareFingerprint];
 
-    // Connect to VPS Server Live Bind Route
     NSString *urlStr = [NSString stringWithFormat:@"https://203.175.11.15.nip.io/admin/bind_dylib?key=%@&hwid=%@", cleanKey, deviceFp];
     NSURL *url = [NSURL URLWithString:urlStr];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:10.0];
@@ -94,7 +93,6 @@
             NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
             BOOL success = [json[@"success"] boolValue];
             if (success) {
-                // Key is officially bound to this phone on the panel
                 NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
                 [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
                 [defs setObject:deviceFp forKey:@"HadiMod_BoundDevice"];
@@ -214,12 +212,16 @@
 @end
 
 // -------------------------------------------------------------
-// 4. GOOGLE MAPS CONTROLLER (Direct API Integration)
+// 4. PURE NATIVE APPLE MAPKIT CONTROLLER (NO WEBVIEW - ZERO BLOCKS)
 // -------------------------------------------------------------
-@interface HadiModMapViewController : UIViewController <WKNavigationDelegate, WKScriptMessageHandler>
-@property (nonatomic, strong) WKWebView *webView;
+static NSString *const kHadiPinID = @"HadiPinAnnotation";
+
+@interface HadiModMapViewController : UIViewController <MKMapViewDelegate>
+@property (nonatomic, strong) MKMapView *mapView;
+@property (nonatomic, strong) MKPointAnnotation *pin;
 @property (nonatomic, strong) UIButton *btnToggle;
-@property (nonatomic, strong) UIButton *btnTalabat;
+@property (nonatomic, strong) UIButton *btnDubai;
+@property (nonatomic, strong) UILabel *lblCoords;
 @property (nonatomic, assign) BOOL isSpoofing;
 @property (nonatomic, assign) CLLocationCoordinate2D currentCoords;
 @end
@@ -228,10 +230,18 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.96];
-    self.view.layer.cornerRadius = 18.0;
+    
+    // Explicit sizing guaranteed to render
+    CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+    CGFloat pad = 12.0;
+    CGFloat cardW = screenW - (pad * 2);
+    CGFloat cardH = 460.0;
+    
+    self.view.frame = CGRectMake(pad, 70, cardW, cardH);
+    self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.10 blue:0.14 alpha:0.98];
+    self.view.layer.cornerRadius = 20.0;
     self.view.layer.masksToBounds = YES;
-    self.view.layer.borderColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:0.9].CGColor;
+    self.view.layer.borderColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:0.8].CGColor;
     self.view.layer.borderWidth = 1.5;
 
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
@@ -239,84 +249,75 @@
     double lat = [defs doubleForKey:@"HadiMod_SpoofLatitude"];
     double lon = [defs doubleForKey:@"HadiMod_SpoofLongitude"];
     if (lat == 0.0 && lon == 0.0) {
-        lat = 25.2048; // Dubai Center
+        lat = 25.2048; // Dubai
         lon = 55.2708;
     }
     self.currentCoords = CLLocationCoordinate2DMake(lat, lon);
 
-    WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
-    [config.userContentController addScriptMessageHandler:self name:@"hadiLocationHandler"];
+    // 1. Top Header
+    UILabel *lblTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, 220, 28)];
+    lblTitle.text = @"⚡ HADI RIDER RADAR";
+    lblTitle.textColor = [UIColor whiteColor];
+    lblTitle.font = [UIFont boldSystemFontOfSize:16];
+    [self.view addSubview:lblTitle];
 
-    self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(10, 50, self.view.bounds.size.width - 20, 310) configuration:config];
-    self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.webView.layer.cornerRadius = 12.0;
-    self.webView.layer.masksToBounds = YES;
-    self.webView.navigationDelegate = self;
-    [self.view addSubview:self.webView];
+    UIButton *btnClose = [UIButton buttonWithType:UIButtonTypeCustom];
+    btnClose.frame = CGRectMake(cardW - 44, 10, 32, 32);
+    [btnClose setTitle:@"✕" forState:UIControlStateNormal];
+    [btnClose setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    btnClose.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:0.9];
+    btnClose.layer.cornerRadius = 16;
+    [btnClose addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:btnClose];
 
-    [self setupControls];
-    [self loadGoogleMapsWithLat:lat lon:lon];
-}
+    // 2. Pure Native iOS MapKit (Never blocked by App-Transport-Security or JavaScript)
+    CGFloat mapY = 48.0;
+    CGFloat mapH = 290.0;
+    self.mapView = [[MKMapView alloc] initWithFrame:CGRectMake(12, mapY, cardW - 24, mapH)];
+    self.mapView.layer.cornerRadius = 14.0;
+    self.mapView.layer.masksToBounds = YES;
+    self.mapView.delegate = self;
+    self.mapView.mapType = MKMapTypeStandard;
+    self.mapView.showsCompass = YES;
+    self.mapView.showsScale = YES;
+    [self.view addSubview:self.mapView];
 
-- (void)loadGoogleMapsWithLat:(double)lat lon:(double)lon {
-    NSString *apiKey = @"AIzaSyCNSBu4Vp9Ip6elthoLwAuxRAmLcoFWRHM";
+    // Add Red Pin Marker
+    self.pin = [[MKPointAnnotation alloc] init];
+    self.pin.coordinate = self.currentCoords;
+    self.pin.title = @"Target Pin (Tap anywhere)";
+    [self.mapView addAnnotation:self.pin];
 
-    NSString *html = [NSString stringWithFormat:
-        @"<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>"
-        @"<style>body,html,#map{margin:0;padding:0;height:100%%;width:100%%;background:#242f3e;}</style>"
-        @"<script src='https://maps.googleapis.com/maps/api/js?key=%@&callback=initMap' async defer></script>"
-        @"<script>"
-        @"var map, marker;"
-        @"function initMap() {"
-        @"  var pos = {lat: %f, lng: %f};"
-        @"  map = new google.maps.Map(document.getElementById('map'), {"
-        @"    center: pos,"
-        @"    zoom: 15,"
-        @"    disableDefaultUI: true,"
-        @"    zoomControl: false,"
-        @"    styles: ["
-        @"      {elementType: 'geometry', stylers: [{color: '#242f3e'}]},"
-        @"      {elementType: 'labels.text.stroke', stylers: [{color: '#242f3e'}]},"
-        @"      {elementType: 'labels.text.fill', stylers: [{color: '#746855'}]},"
-        @"      {featureType: 'road', elementType: 'geometry', stylers: [{color: '#38414e'}]},"
-        @"      {featureType: 'road', elementType: 'geometry.stroke', stylers: [{color: '#212a37'}]},"
-        @"      {featureType: 'water', elementType: 'geometry', stylers: [{color: '#17263c'}]}"
-        @"    ]"
-        @"  });"
-        @"  marker = new google.maps.Marker({"
-        @"    position: pos,"
-        @"    map: map,"
-        @"    draggable: true,"
-        @"    animation: google.maps.Animation.DROP"
-        @"  });"
-        @"  google.maps.event.addListener(marker, 'dragend', function(e) {"
-        @"    var lat = e.latLng.lat(); var lng = e.latLng.lng();"
-        @"    window.webkit.messageHandlers.hadiLocationHandler.postMessage({lat: lat, lng: lng});"
-        @"  });"
-        @"  google.maps.event.addListener(map, 'click', function(e) {"
-        @"    var lat = e.latLng.lat(); var lng = e.latLng.lng();"
-        @"    marker.setPosition(e.latLng);"
-        @"    window.webkit.messageHandlers.hadiLocationHandler.postMessage({lat: lat, lng: lng});"
-        @"  });"
-        @"}"
-        @"window.setMapCenter = function(lat, lng) {"
-        @"  var newPos = new google.maps.LatLng(lat, lng);"
-        @"  map.panTo(newPos);"
-        @"  marker.setPosition(newPos);"
-        @"};"
-        @"</script></head><body><div id='map'></div></body></html>",
-        apiKey, lat, lon];
+    // Zoom into initial coordinates
+    MKCoordinateRegion reg = MKCoordinateRegionMakeWithDistance(self.currentCoords, 2500, 2500);
+    [self.mapView setRegion:reg animated:NO];
 
-    [self.webView loadHTMLString:html baseURL:[NSURL URLWithString:@"https://maps.googleapis.com"]];
-}
+    // Tap Gesture to Move Pin Anywhere on Map
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleMapTap:)];
+    [self.mapView addGestureRecognizer:tap];
 
-- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
-    if ([message.body isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *dict = (NSDictionary *)message.body;
-        double lat = [dict[@"lat"] doubleValue];
-        double lon = [dict[@"lng"] doubleValue];
-        self.currentCoords = CLLocationCoordinate2DMake(lat, lon);
-    }
+    // 3. Status Coordinate Label
+    self.lblCoords = [[UILabel alloc] initWithFrame:CGRectMake(16, mapY + mapH + 8, cardW - 32, 20)];
+    self.lblCoords.textColor = [UIColor colorWithRed:0.7 green:0.85 blue:1.0 alpha:1.0];
+    self.lblCoords.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
+    self.lblCoords.text = [NSString stringWithFormat:@"Target: %.5f, %.5f", lat, lon];
+    self.lblCoords.textAlignment = NSTextAlignmentCenter;
+    [self.view addSubview:self.lblCoords];
+
+    // 4. Control Buttons (Toggle Spoof | Lock Pin | Dubai Center)
+    CGFloat btnY = mapY + mapH + 34;
+    CGFloat btnW = (cardW - 36) / 3.0;
+    CGFloat btnH = 42.0;
+
+    UIColor *toggleBg = self.isSpoofing ? [UIColor colorWithRed:0.1 green:0.7 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.4 green:0.4 blue:0.4 alpha:1.0];
+    self.btnToggle = [self makeButton:self.isSpoofing ? @"✓ SPOOF ON" : @"○ SPOOF OFF" bg:toggleBg frame:CGRectMake(12, btnY, btnW, btnH) sel:@selector(toggleSpoof)];
+    [self.view addSubview:self.btnToggle];
+
+    UIButton *btnLock = [self makeButton:@"LOCK PIN" bg:[UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0] frame:CGRectMake(12 + btnW + 6, btnY, btnW, btnH) sel:@selector(lockCurrentPin)];
+    [self.view addSubview:btnLock];
+
+    self.btnDubai = [self makeButton:@"DUBAI CENTER" bg:[UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:1.0] frame:CGRectMake(12 + (btnW + 6) * 2, btnY, btnW, btnH) sel:@selector(centerDubai)];
+    [self.view addSubview:self.btnDubai];
 }
 
 - (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg frame:(CGRect)frame sel:(SEL)sel {
@@ -326,35 +327,30 @@
     [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     btn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
     btn.backgroundColor = bg;
-    btn.layer.cornerRadius = 8.0;
+    btn.layer.cornerRadius = 10.0;
     [btn addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
     return btn;
 }
 
-- (void)setupControls {
-    CGFloat w = self.view.bounds.size.width;
+- (void)handleMapTap:(UITapGestureRecognizer *)gesture {
+    CGPoint point = [gesture locationInView:self.mapView];
+    CLLocationCoordinate2D coord = [self.mapView convertPoint:point toCoordinateFromView:self.mapView];
+    self.currentCoords = coord;
+    self.pin.coordinate = coord;
+    self.lblCoords.text = [NSString stringWithFormat:@"Target: %.5f, %.5f", coord.latitude, coord.longitude];
+}
 
-    UIButton *btnClose = [self makeButton:@"✕" bg:[UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0] frame:CGRectMake(w - 45, 10, 35, 30) sel:@selector(closeTapped)];
-    [self.view addSubview:btnClose];
-
-    UILabel *lblTitle = [[UILabel alloc] initWithFrame:CGRectMake(15, 10, 200, 30)];
-    lblTitle.text = @"⚡ HADI GOOGLE RADAR";
-    lblTitle.textColor = [UIColor whiteColor];
-    lblTitle.font = [UIFont boldSystemFontOfSize:15];
-    [self.view addSubview:lblTitle];
-
-    CGFloat btnW = (w - 40) / 3.0;
-    CGFloat y = 370;
-
-    UIColor *toggleBg = self.isSpoofing ? [UIColor colorWithRed:0.1 green:0.7 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
-    self.btnToggle = [self makeButton:self.isSpoofing ? @"✓ SPOOF ON" : @"○ SPOOF OFF" bg:toggleBg frame:CGRectMake(10, y, btnW, 40) sel:@selector(toggleSpoof)];
-    [self.view addSubview:self.btnToggle];
-
-    UIButton *btnSave = [self makeButton:@"LOCK PIN" bg:[UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0] frame:CGRectMake(15 + btnW, y, btnW, 40) sel:@selector(saveLocation)];
-    [self.view addSubview:btnSave];
-
-    self.btnTalabat = [self makeButton:@"DUBAI CENTER" bg:[UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:1.0] frame:CGRectMake(20 + btnW * 2, y, btnW, 40) sel:@selector(centerDubai)];
-    [self.view addSubview:self.btnTalabat];
+- (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
+    MKPinAnnotationView *pinView = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:kHadiPinID];
+    if (!pinView) {
+        pinView = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:kHadiPinID];
+        pinView.pinTintColor = [UIColor redColor];
+        pinView.animatesDrop = YES;
+        pinView.canShowCallout = YES;
+    } else {
+        pinView.annotation = annotation;
+    }
+    return pinView;
 }
 
 - (void)toggleSpoof {
@@ -364,16 +360,16 @@
     [defs synchronize];
 
     [self.btnToggle setTitle:self.isSpoofing ? @"✓ SPOOF ON" : @"○ SPOOF OFF" forState:UIControlStateNormal];
-    self.btnToggle.backgroundColor = self.isSpoofing ? [UIColor colorWithRed:0.1 green:0.7 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
+    self.btnToggle.backgroundColor = self.isSpoofing ? [UIColor colorWithRed:0.1 green:0.7 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.4 green:0.4 blue:0.4 alpha:1.0];
 }
 
-- (void)saveLocation {
+- (void)lockCurrentPin {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     [defs setDouble:self.currentCoords.latitude forKey:@"HadiMod_SpoofLatitude"];
     [defs setDouble:self.currentCoords.longitude forKey:@"HadiMod_SpoofLongitude"];
     [defs synchronize];
 
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Location Saved"
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Location Locked"
                                                                message:[NSString stringWithFormat:@"Target Coordinates:\nLat: %.5f\nLon: %.5f", self.currentCoords.latitude, self.currentCoords.longitude]
                                                         preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -381,7 +377,12 @@
 }
 
 - (void)centerDubai {
-    [self.webView evaluateJavaScript:@"window.setMapCenter(25.2048, 55.2708);" completionHandler:nil];
+    CLLocationCoordinate2D dubai = CLLocationCoordinate2DMake(25.2048, 55.2708);
+    self.currentCoords = dubai;
+    self.pin.coordinate = dubai;
+    self.lblCoords.text = [NSString stringWithFormat:@"Target: %.5f, %.5f", dubai.latitude, dubai.longitude];
+    MKCoordinateRegion reg = MKCoordinateRegionMakeWithDistance(dubai, 2500, 2500);
+    [self.mapView setRegion:reg animated:YES];
 }
 
 - (void)closeTapped {
@@ -440,9 +441,6 @@ static HadiModMapViewController *g_mapVC = nil;
 - (void)showMapController {
     if (!g_mapVC || !g_mapVC.view.superview) {
         g_mapVC = [[HadiModMapViewController alloc] init];
-        CGFloat w = [UIScreen mainScreen].bounds.size.width - 40;
-        CGFloat h = 430;
-        g_mapVC.view.frame = CGRectMake(20, 80, w, h);
         [[UIApplication sharedApplication].keyWindow addSubview:g_mapVC.view];
     } else {
         [g_mapVC closeTapped];
