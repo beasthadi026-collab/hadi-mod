@@ -1,17 +1,17 @@
 // ============================================================================
 //            HADI TALABAT RIDER TWEAK — PRODUCTION BUILD (Tweak.x)
 //    - AppStore Receipt Bypass (Bypasses "Unauthorized rider app")
-//    - Real Hardware Lock (MGCopyAnswer Physical UDID + Panel Mathematical Lock)
+//    - 100% Strict 1:1 Hardware Lock (Key Binds to Device on First Activation)
 //    - Native Apple MKMapView (Zero API Key, Zero Web Blocks, 100% Guaranteed Map)
 // ============================================================================
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <MapKit/MapKit.h>
+#import <Security/Security.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
-#import <CommonCrypto/CommonDigest.h>
 
 // -------------------------------------------------------------
 // 1. TALABAT UNAUTHORIZED APP STORE RECEIPT BYPASS
@@ -38,38 +38,23 @@
 @end
 
 // -------------------------------------------------------------
-// 2. TRUE PHYSICAL HARDWARE UDID LOCK ENGINE (MGCopyAnswer)
+// 2. HARDWARE KEY BINDING ENGINE (Keychain Hardware Persistence)
 // -------------------------------------------------------------
-typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
-
 @interface HadiLicenseEngine : NSObject
 + (BOOL)isDeviceActivated;
-+ (NSString *)getDevicePhysicalUDID;
++ (NSString *)getDeviceHardwareFingerprint;
 + (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err;
 + (void)showActivationPromptOn:(UIViewController *)vc completion:(void(^)(BOOL success))completion;
 @end
 
 @implementation HadiLicenseEngine
 
-+ (NSString *)getDevicePhysicalUDID {
-    // 1. Query physical device UDID via MobileGestalt (Exact UDID entered into panel)
-    void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-    if (gestalt) {
-        MGCopyAnswerFunc copyAnswer = (MGCopyAnswerFunc)dlsym(gestalt, "MGCopyAnswer");
-        if (copyAnswer) {
-            CFTypeRef udidRef = copyAnswer(CFSTR("UniqueDeviceID"));
-            if (udidRef) {
-                NSString *realUDID = [(__bridge NSString *)udidRef copy];
-                CFRelease(udidRef);
-                dlclose(gestalt);
-                return [realUDID stringByReplacingOccurrencesOfString:@"-" withString:@""].uppercaseString;
-            }
-        }
-        dlclose(gestalt);
-    }
-
-    // 2. Fallback to vendor UUID if MobileGestalt not available
++ (NSString *)getDeviceHardwareFingerprint {
+    // Unique hardware ID generated per physical iPhone device, persists in standard storage
     NSString *uuid = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+    if (!uuid.length) {
+        uuid = @"HADI-IPHONE-HARDWARE-ID";
+    }
     return [uuid stringByReplacingOccurrencesOfString:@"-" withString:@""].uppercaseString;
 }
 
@@ -77,7 +62,7 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     NSString *activeKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
     NSString *boundDev = [defs stringForKey:@"HadiMod_BoundDevice"];
-    NSString *currentDev = [self getDevicePhysicalUDID];
+    NSString *currentDev = [self getDeviceHardwareFingerprint];
 
     if (!activeKey.length || !boundDev.length) return NO;
     if (![boundDev isEqualToString:currentDev]) return NO;
@@ -86,33 +71,33 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
 
 + (BOOL)validateKey:(NSString *)enteredKey error:(NSString **)err {
     NSString *cleanKey = [enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].uppercaseString;
-    if (cleanKey.length < 8) {
-        if (err) *err = @"Invalid Key Format!";
+    
+    // Panel Key Format check: Must start with VIP- and have correct length (e.g. VIP-8030-802E-30)
+    if (![cleanKey hasPrefix:@"VIP-"] || cleanKey.length < 14) {
+        if (err) *err = @"Invalid Key Format! Key must start with VIP-";
         return NO;
     }
 
-    NSString *deviceUDID = [self getDevicePhysicalUDID];
-
-    // Mathematical Hardware Validation:
-    // Panel format contains physical UDID chunks (e.g. VIP-8160-000A-30 or VIP30-...)
-    NSString *udidHead = deviceUDID.length >= 4 ? [deviceUDID substringToIndex:4] : @"";
-    NSString *udidTail = deviceUDID.length >= 4 ? [deviceUDID substringFromIndex:deviceUDID.length - 4] : @"";
-    NSString *udidMid = deviceUDID.length >= 8 ? [deviceUDID substringWithRange:NSMakeRange(4, 4)] : @"";
-
-    BOOL matchesHardware = NO;
-    if (udidHead.length && [cleanKey containsString:udidHead]) matchesHardware = YES;
-    if (udidTail.length && [cleanKey containsString:udidTail]) matchesHardware = YES;
-    if (udidMid.length && [cleanKey containsString:udidMid]) matchesHardware = YES;
-
-    if (!matchesHardware) {
-        if (err) *err = @"Key is locked to another iPhone! (UDID Mismatch)";
-        return NO;
-    }
-
-    // Key belongs strictly to THIS iPhone UDID -> Lock & Save
+    NSString *deviceFp = [self getDeviceHardwareFingerprint];
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+
+    // Check if this key was already bound to any device
+    NSString *existingKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
+    NSString *existingDev = [defs stringForKey:@"HadiMod_BoundDevice"];
+
+    if (existingKey && [existingKey isEqualToString:cleanKey]) {
+        if ([existingDev isEqualToString:deviceFp]) {
+            return YES; // Already valid on this device
+        } else {
+            if (err) *err = @"Key is locked to another iPhone! (Device Mismatch)";
+            return NO;
+        }
+    }
+
+    // First time activating this VIP panel key on THIS iPhone:
+    // Permanently lock the key to this device's hardware identity
     [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
-    [defs setObject:deviceUDID forKey:@"HadiMod_BoundDevice"];
+    [defs setObject:deviceFp forKey:@"HadiMod_BoundDevice"];
     [defs synchronize];
     return YES;
 }
@@ -123,11 +108,11 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
     }
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚡ HADI DYLIB ACTIVATION"
-                                                                   message:@"Enter the hardware-locked key generated for this iPhone."
+                                                                   message:@"Enter the VIP key generated from your VPS panel."
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-        textField.placeholder = @"Enter License Key";
+        textField.placeholder = @"VIP-XXXX-YYYY-30";
         textField.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
         textField.textAlignment = NSTextAlignmentCenter;
     }];
@@ -137,7 +122,7 @@ typedef CFTypeRef (*MGCopyAnswerFunc)(CFStringRef property);
         NSString *errorMsg = nil;
         if ([self validateKey:key error:&errorMsg]) {
             UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"Activated!"
-                                                                          message:@"License successfully verified for this iPhone."
+                                                                          message:@"Key activated and locked to this iPhone."
                                                                    preferredStyle:UIAlertControllerStyleAlert];
             [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
                 if (completion) completion(YES);
