@@ -5,7 +5,9 @@
 //   - [▶ PLAY (MOVE)] and [⏹ STOP (REAL GPS)] instant toggle buttons
 //   - Auto-move while PLAY is active (single tap moves immediately)
 //   - Coordinate Save & Favorites Manager (Custom Name, Lat, Lon)
-//   - Dynamic Server Expiry & Live Delete Revocation (Every startup/foreground)
+//   - DOUBLE EXPIRY SHIELD:
+//       1. Local Device Clock Check (Instant lock if device date > 30 days)
+//       2. Remote Server Expiry & Revocation Check (/admin/bind_dylib)
 //   - Sideload Receipt Bypass (Kills "Unauthorized rider app" on Login)
 //   - Strict 1:1 Hardware Lock bound to VPS: https://203.175.11.15.nip.io/admin/bind_dylib
 //   - Safe Dynamic Delegate Forwarding
@@ -22,6 +24,7 @@ static NSString *const kCLS_PrefKey_TargetLat   = @"CLS_TargetLat";
 static NSString *const kCLS_PrefKey_TargetLon   = @"CLS_TargetLon";
 static NSString *const kCLS_PrefKey_LicenseKey  = @"CLS_SavedKey";
 static NSString *const kCLS_PrefKey_BoundDev    = @"CLS_BoundDev";
+static NSString *const kCLS_PrefKey_FirstActive = @"CLS_FirstActiveTimestamp";
 static NSString *const kCLS_PrefKey_Favorites   = @"CLS_SavedFavorites";
 static NSString *const kCLS_FavCellIdentifier   = @"FavCell";
 
@@ -591,7 +594,40 @@ static void CLS_VerifyAndBindLicense(void) {
         NSString *hwid = CLS_GetDeviceHardwareIdentifier();
         
         if (savedKey.length > 5) {
-            // Live Server Check: verify if key is still valid or deleted/expired on VPS
+            // --- SHIELD 1: LOCAL HARDWARE CLOCK EXPIRY CHECK ---
+            double firstActive = [defs doubleForKey:kCLS_PrefKey_FirstActive];
+            double now = [[NSDate date] timeIntervalSince1970];
+            
+            if (firstActive <= 0.0) {
+                firstActive = now;
+                [defs setDouble:firstActive forKey:kCLS_PrefKey_FirstActive];
+                [defs synchronize];
+            }
+            
+            // 30 Days = 30 * 24 * 3600 = 2,592,000 seconds
+            if ((now - firstActive) > (30.0 * 86400.0) || now < (firstActive - 86400.0)) {
+                // Local Clock Expired! Wipe key and revoke immediately
+                [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
+                [defs removeObjectForKey:kCLS_PrefKey_FirstActive];
+                [defs setBool:NO forKey:kCLS_PrefKey_SpoofActive];
+                [defs synchronize];
+                
+                CLS_RemoveFloatingMenuButton();
+                
+                UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+                if (root) {
+                    UIAlertController *expAlert = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
+                                                                                      message:@"Key has expired (30 Days over)!"
+                                                                               preferredStyle:UIAlertControllerStyleAlert];
+                    [expAlert addAction:[UIAlertAction actionWithTitle:@"ACTIVATE NEW KEY" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+                        CLS_PromptKeyActivation();
+                    }]];
+                    [root presentViewController:expAlert animated:YES completion:nil];
+                }
+                return;
+            }
+            
+            // --- SHIELD 2: REMOTE SERVER SYNC & REVOCATION CHECK ---
             NSString *urlStr = [NSString stringWithFormat:@"https://203.175.11.15.nip.io/admin/bind_dylib?key=%@&hwid=%@", savedKey, hwid];
             NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
             req.timeoutInterval = 8.0;
@@ -600,16 +636,15 @@ static void CLS_VerifyAndBindLicense(void) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)res;
                     if (err) {
-                        // Network offline - allow temporarily with existing button
                         CLS_ShowFloatingMenuButton();
                         return;
                     }
                     if (httpRes.statusCode == 200) {
-                        // Key is valid & active on server
                         CLS_ShowFloatingMenuButton();
                     } else {
                         // Key expired or deleted from server! Revoke immediately:
                         [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
+                        [defs removeObjectForKey:kCLS_PrefKey_FirstActive];
                         [defs setBool:NO forKey:kCLS_PrefKey_SpoofActive];
                         [defs synchronize];
                         
@@ -663,8 +698,10 @@ static void CLS_PromptKeyActivation(void) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)res;
                 if (!err && httpRes.statusCode == 200) {
+                    double now = [[NSDate date] timeIntervalSince1970];
                     [defs setObject:inputKey forKey:kCLS_PrefKey_LicenseKey];
                     [defs setObject:hwid forKey:kCLS_PrefKey_BoundDev];
+                    [defs setDouble:now forKey:kCLS_PrefKey_FirstActive];
                     [defs synchronize];
                     
                     UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
