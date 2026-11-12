@@ -2,13 +2,12 @@
 //            HADI TALABAT RIDER TWEAK — PRODUCTION BUILD (Tweak.x)
 //    - AppStore Receipt Bypass (Bypasses "Unauthorized rider app")
 //    - Real 1:1 Hardware Lock (VPS Database Verification: /api/v2/verify)
-//    - Leaflet Map with Working Esri ArcGIS Tiles (No OSM Block / No API Key)
+//    - Native Apple MKMapView (Zero API Key, Zero Web Blocks, 100% Guaranteed Map)
 // ============================================================================
 
 #import <UIKit/UIKit.h>
 #import <CoreLocation/CoreLocation.h>
 #import <MapKit/MapKit.h>
-#import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
@@ -38,7 +37,7 @@
 @end
 
 // -------------------------------------------------------------
-// 2. 1:1 HARDWARE LICENSE VALIDATION ENGINE (VPS Online Check)
+// 2. 1:1 HARDWARE LICENSE VALIDATION ENGINE
 // -------------------------------------------------------------
 @interface HadiLicenseEngine : NSObject
 + (BOOL)isDeviceActivated;
@@ -74,18 +73,16 @@
 
     NSString *devFp = [self getDeviceHardwareFingerprint];
 
-    // Query VPS directly to verify license existence and lock to this device
+    // Check online verification
     NSString *urlStr = [NSString stringWithFormat:@"https://203.175.11.15.nip.io/api/v2/verify?key=%@&hwid=%@", cleanKey, devFp];
     NSURL *url = [NSURL URLWithString:urlStr];
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:8.0];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:6.0];
     [req setHTTPMethod:@"GET"];
 
     NSURLSession *session = [NSURLSession sharedSession];
     [[session dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
-            
-            // If VPS server verifies or key matches panel format
             if (!error && httpRes.statusCode == 200) {
                 NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
                 [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
@@ -95,9 +92,7 @@
                 return;
             }
 
-            // Fallback Local 1:1 check:
-            // Once activated on this device, the device fingerprint is stored in local keychain/defaults.
-            // A key can only ever bind to the first device that activates it.
+            // Local 1:1 hardware device bind fallback
             NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
             NSString *savedKey = [defs stringForKey:@"HadiMod_ActiveLicense"];
             NSString *savedDev = [defs stringForKey:@"HadiMod_BoundDevice"];
@@ -112,7 +107,7 @@
                 }
             }
 
-            // If new key entered from panel: Bind it exclusively to THIS phone
+            // Bind new panel key exclusively to this iPhone
             [defs setObject:cleanKey forKey:@"HadiMod_ActiveLicense"];
             [defs setObject:devFp forKey:@"HadiMod_BoundDevice"];
             [defs synchronize];
@@ -227,10 +222,11 @@
 @end
 
 // -------------------------------------------------------------
-// 4. MAP & CONTROLLER UI (Leaflet + Esri World Street Map Tiles)
+// 4. NATIVE APPLE MKMAPVIEW CONTROLLER (No API Key Required)
 // -------------------------------------------------------------
-@interface HadiModMapViewController : UIViewController <WKNavigationDelegate, WKScriptMessageHandler>
-@property (nonatomic, strong) WKWebView *webView;
+@interface HadiModMapViewController : UIViewController <MKMapViewDelegate>
+@property (nonatomic, strong) MKMapView *mapView;
+@property (nonatomic, strong) MKPointAnnotation *pin;
 @property (nonatomic, strong) UIButton *btnToggle;
 @property (nonatomic, strong) UIButton *btnTalabat;
 @property (nonatomic, assign) BOOL isSpoofing;
@@ -241,10 +237,10 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.96];
     self.view.layer.cornerRadius = 18.0;
     self.view.layer.masksToBounds = YES;
-    self.view.layer.borderColor = [UIColor colorWithRed:0.0 green:0.8 blue:1.0 alpha:0.8].CGColor;
+    self.view.layer.borderColor = [UIColor colorWithRed:0.0 green:0.8 blue:1.0 alpha:0.9].CGColor;
     self.view.layer.borderWidth = 1.5;
 
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
@@ -257,18 +253,51 @@
     }
     self.currentCoords = CLLocationCoordinate2DMake(lat, lon);
 
-    WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
-    [config.userContentController addScriptMessageHandler:self name:@"hadiLocationHandler"];
+    // Native iOS MapKit (Apple Maps) — Runs natively, never blocked by CORS or Webkit
+    self.mapView = [[MKMapView alloc] initWithFrame:CGRectMake(10, 50, self.view.bounds.size.width - 20, 310)];
+    self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.mapView.layer.cornerRadius = 12.0;
+    self.mapView.layer.masksToBounds = YES;
+    self.mapView.delegate = self;
+    self.mapView.showsUserLocation = NO;
+    [self.view addSubview:self.mapView];
 
-    self.webView = [[WKWebView alloc] initWithFrame:CGRectMake(10, 50, self.view.bounds.size.width - 20, 310) configuration:config];
-    self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.webView.layer.cornerRadius = 12.0;
-    self.webView.layer.masksToBounds = YES;
-    self.webView.navigationDelegate = self;
-    [self.view addSubview:self.webView];
+    // Add draggable Pin
+    self.pin = [[MKPointAnnotation alloc] init];
+    self.pin.coordinate = self.currentCoords;
+    self.pin.title = @"Target Pin";
+    [self.mapView addAnnotation:self.pin];
+
+    // Set Map Region
+    MKCoordinateRegion region = MKCoordinateRegionMakeWithDistance(self.currentCoords, 2000, 2000);
+    [self.mapView setRegion:region animated:NO];
+
+    // Add Tap Gesture to move Pin on map
+    UITapGestureRecognizer *mapTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(mapTapped:)];
+    [self.mapView addGestureRecognizer:mapTap];
 
     [self setupControls];
-    [self loadLeafletMapWithLat:lat lon:lon];
+}
+
+- (void)mapTapped:(UITapGestureRecognizer *)gesture {
+    CGPoint point = [gesture locationInView:self.mapView];
+    CLLocationCoordinate2D coord = [self.mapView convertPoint:point toCoordinateFromView:self.mapView];
+    self.currentCoords = coord;
+    self.pin.coordinate = coord;
+}
+
+- (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
+    static NSString *pinID = @"HadiPin";
+    MKPinAnnotationView *pinView = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pinID];
+    if (!pinView) {
+        pinView = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:pinID];
+        pinView.pinTintColor = [UIColor redColor];
+        pinView.animatesDrop = YES;
+        pinView.canShowCallout = YES;
+    } else {
+        pinView.annotation = annotation;
+    }
+    return pinView;
 }
 
 - (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg frame:(CGRect)frame sel:(SEL)sel {
@@ -302,46 +331,11 @@
     self.btnToggle = [self makeButton:self.isSpoofing ? @"✓ SPOOF ON" : @"○ SPOOF OFF" bg:toggleBg frame:CGRectMake(10, y, btnW, 40) sel:@selector(toggleSpoof)];
     [self.view addSubview:self.btnToggle];
 
-    UIButton *btnSave = [self makeButton:@"SET PIN" bg:[UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0] frame:CGRectMake(15 + btnW, y, btnW, 40) sel:@selector(saveLocation)];
+    UIButton *btnSave = [self makeButton:@"LOCK PIN" bg:[UIColor colorWithRed:0.1 green:0.5 blue:0.9 alpha:1.0] frame:CGRectMake(15 + btnW, y, btnW, 40) sel:@selector(saveLocation)];
     [self.view addSubview:btnSave];
 
-    self.btnTalabat = [self makeButton:@"TALABAT ZONE" bg:[UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:1.0] frame:CGRectMake(20 + btnW * 2, y, btnW, 40) sel:@selector(fetchTalabatRestaurants)];
+    self.btnTalabat = [self makeButton:@"DUBAI CENTER" bg:[UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:1.0] frame:CGRectMake(20 + btnW * 2, y, btnW, 40) sel:@selector(centerDubai)];
     [self.view addSubview:self.btnTalabat];
-}
-
-- (void)loadLeafletMapWithLat:(double)lat lon:(double)lon {
-    NSString *html = [NSString stringWithFormat:
-        @"<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>"
-        @"<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>"
-        @"<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>"
-        @"<style>body,html,#map{margin:0;padding:0;height:100%%;width:100%%;background:#1a1a1a;}</style></head><body>"
-        @"<div id='map'></div><script>"
-        @"var map = L.map('map', {zoomControl: false}).setView([%f, %f], 14);"
-        @"L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {"
-        @"  maxZoom: 19, attribution: 'Esri ArcGIS'"
-        @"}).addTo(map);"
-        @"var marker = L.marker([%f, %f], {draggable: true}).addTo(map);"
-        @"marker.on('dragend', function(e){"
-        @"  var c = marker.getLatLng();"
-        @"  window.webkit.messageHandlers.hadiLocationHandler.postMessage({lat: c.lat, lng: c.lng});"
-        @"});"
-        @"map.on('click', function(e){"
-        @"  marker.setLatLng(e.latlng);"
-        @"  window.webkit.messageHandlers.hadiLocationHandler.postMessage({lat: e.latlng.lat, lng: e.latlng.lng});"
-        @"});"
-        @"window.setMapCenter = function(lat, lng){ marker.setLatLng([lat, lng]); map.setView([lat, lng], 15); };"
-        @"</script></body></html>", lat, lon, lat, lon];
-
-    [self.webView loadHTMLString:html baseURL:nil];
-}
-
-- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
-    if ([message.body isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *dict = (NSDictionary *)message.body;
-        double lat = [dict[@"lat"] doubleValue];
-        double lon = [dict[@"lng"] doubleValue];
-        self.currentCoords = CLLocationCoordinate2DMake(lat, lon);
-    }
 }
 
 - (void)toggleSpoof {
@@ -360,15 +354,19 @@
     [defs setDouble:self.currentCoords.longitude forKey:@"HadiMod_SpoofLongitude"];
     [defs synchronize];
 
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Location Locked"
-                                                               message:[NSString stringWithFormat:@"Lat: %.5f\nLon: %.5f", self.currentCoords.latitude, self.currentCoords.longitude]
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Location Saved"
+                                                               message:[NSString stringWithFormat:@"Target Coordinates:\nLat: %.5f\nLon: %.5f", self.currentCoords.latitude, self.currentCoords.longitude]
                                                         preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:a animated:YES completion:nil];
 }
 
-- (void)fetchTalabatRestaurants {
-    [self.webView evaluateJavaScript:@"window.setMapCenter(25.2048, 55.2708);" completionHandler:nil];
+- (void)centerDubai {
+    CLLocationCoordinate2D dubai = CLLocationCoordinate2DMake(25.2048, 55.2708);
+    self.currentCoords = dubai;
+    self.pin.coordinate = dubai;
+    MKCoordinateRegion region = MKCoordinateRegionMakeWithDistance(dubai, 2500, 2500);
+    [self.mapView setRegion:region animated:YES];
 }
 
 - (void)closeTapped {
