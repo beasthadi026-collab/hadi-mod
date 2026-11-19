@@ -1,7 +1,7 @@
 // ============================================================================
 //                    Tweak.x - TALABAT UNIFIED SAFE TWEAK
 //   - Clean Native Apple MapKit (Full-screen radar with Tap-to-Pin)
-//   - Branding: "HADI MOD X ERROR EXPERT" (Login & Map)
+//   - Branding: "DEV ABDULLAH X HADI MOD" (Login & Map)
 //   - Trigger: 3 Fingers Double Tap (3 ungliyon se 2 baar tap kahin bhi screen par)
 //   - Floating button completely removed!
 //   - [▶ PLAY (MOVE)] and [⏹ STOP (REAL GPS)] instant toggle buttons
@@ -178,7 +178,7 @@ static const void *kCLDelegateProxyKey = &kCLDelegateProxyKey;
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleMapTap:)];
     [self.mapView addGestureRecognizer:tap];
     
-    // 2. Top Status Bar (Branding: HADI MOD X ERROR EXPERT)
+    // 2. Top Status Bar (Branding: DEV ABDULLAH X HADI MOD)
     UIView *topBar = [[UIView alloc] initWithFrame:CGRectMake(15, 45, self.view.bounds.size.width - 30, 68)];
     topBar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
     topBar.layer.cornerRadius = 14;
@@ -188,7 +188,7 @@ static const void *kCLDelegateProxyKey = &kCLDelegateProxyKey;
     self.lblTitle = [[UILabel alloc] initWithFrame:CGRectMake(15, 8, topBar.bounds.size.width - 70, 24)];
     self.lblTitle.textColor = [UIColor colorWithRed:0.2 green:0.8 blue:1.0 alpha:1.0];
     self.lblTitle.font = [UIFont boldSystemFontOfSize:15];
-    self.lblTitle.text = @"HADI MOD X ERROR EXPERT";
+    self.lblTitle.text = @"DEV ABDULLAH X HADI MOD";
     [topBar addSubview:self.lblTitle];
     
     self.lblStatus = [[UILabel alloc] initWithFrame:CGRectMake(15, 34, topBar.bounds.size.width - 70, 24)];
@@ -614,7 +614,7 @@ static void CLS_VerifyAndBindLicense(void) {
                 
                 UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
                 if (root) {
-                    UIAlertController *expAlert = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
+                    UIAlertController *expAlert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
                                                                                       message:@"Key has expired (30 Days over)!"
                                                                                preferredStyle:UIAlertControllerStyleAlert];
                     [expAlert addAction:[UIAlertAction actionWithTitle:@"ACTIVATE NEW KEY" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
@@ -653,7 +653,7 @@ static void CLS_VerifyAndBindLicense(void) {
                         UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
                         if (root) {
                             NSString *errMsg = (httpRes.statusCode == 404) ? @"Key was deleted from server!" : @"Key has expired (30 Days over)!";
-                            UIAlertController *rev = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
+                            UIAlertController *rev = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
                                                                                          message:errMsg
                                                                                   preferredStyle:UIAlertControllerStyleAlert];
                             [rev addAction:[UIAlertAction actionWithTitle:@"ACTIVATE NEW KEY" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
@@ -678,7 +678,7 @@ static void CLS_PromptKeyActivation(void) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     NSString *hwid = CLS_GetDeviceHardwareIdentifier();
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
                                                                    message:@""
                                                             preferredStyle:UIAlertControllerStyleAlert];
     
@@ -704,7 +704,7 @@ static void CLS_PromptKeyActivation(void) {
                     [defs setDouble:now forKey:kCLS_PrefKey_FirstActive];
                     [defs synchronize];
                     
-                    UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
+                    UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
                                                                                   message:@"Key bound to this iPhone! Double tap with 3 fingers to open GPS."
                                                                            preferredStyle:UIAlertControllerStyleAlert];
                     [succ addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
@@ -713,7 +713,7 @@ static void CLS_PromptKeyActivation(void) {
                     [root presentViewController:succ animated:YES completion:nil];
                 } else {
                     NSString *errMsg = @"Activation failed. Key is expired, deleted, or locked to another iPhone!";
-                    UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"HADI MOD X ERROR EXPERT"
+                    UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
                                                                                   message:errMsg
                                                                            preferredStyle:UIAlertControllerStyleAlert];
                     [fail addAction:[UIAlertAction actionWithTitle:@"RETRY" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
