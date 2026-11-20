@@ -2,7 +2,8 @@
 // Tweak.x - TALABAT UNIFIED SAFE TWEAK
 //   - Clean Native Apple MapKit (Full-screen radar with Tap-to-Pin)
 //   - Branding: "DEV ABDULLAH X HADI MOD" (Login & Map)
-//   - Trigger: 3 Fingers Double Tap
+//   - Trigger: 3 Fingers Double Tap (3 ungliyon se 2 baar tap)
+//   - Auto-Prompt VIP Key popup on App Open if not activated
 //   - [▶ PLAY (MOVE)] and [⏹ STOP (REAL GPS)] instant toggle buttons
 //   - Auto-move while PLAY is active (single tap moves immediately)
 //   - Coordinate Save & Favorites Manager (Custom Name, Lat, Lon)
@@ -524,177 +525,201 @@ static NSString *getPersistentDeviceHWID(void) {
     return newHWID;
 }
 
+#pragma mark - GESTURE INJECTION (3 Fingers Double Tap)
+
+@interface CLSViewController (Launcher)
++ (void)cls_presentRadarScreen;
+@end
+
+@implementation CLSViewController (Launcher)
++ (void)cls_presentRadarScreen {
+    UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+    while (root.presentedViewController) {
+        root = root.presentedViewController;
+    }
+    CLSViewController *vc = [[CLSViewController alloc] init];
+    vc.modalPresentationStyle = UIModalPresentationFullScreen;
+    [root presentViewController:vc animated:YES completion:nil];
+}
+@end
+
+static void CLS_InstallDoubleTapGesture(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = [UIApplication sharedApplication].keyWindow;
+        if (!window) {
+            NSArray *windows = [UIApplication sharedApplication].windows;
+            if (windows.count > 0) window = windows.firstObject;
+        }
+        if (!window) return;
+        
+        for (UIGestureRecognizer *g in window.gestureRecognizers) {
+            if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
+                UITapGestureRecognizer *tg = (UITapGestureRecognizer *)g;
+                if (tg.numberOfTouchesRequired == 3 && tg.numberOfTapsRequired == 2) {
+                    return; // Already attached
+                }
+            }
+        }
+        
+        UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[CLSViewController class] action:@selector(cls_presentRadarScreen)];
+        doubleTap.numberOfTouchesRequired = 3; // 3 Fingers
+        doubleTap.numberOfTapsRequired = 2;    // 2 Taps (Double Tap)
+        doubleTap.cancelsTouchesInView = NO;
+        [window addGestureRecognizer:doubleTap];
+    });
+}
+
 #pragma mark - LICENSE ENFORCEMENT & REMOTE BINDING
 
-static void showLicenseActivationDialog(UIViewController *rootVC, void(^completion)(void)) {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
-                                                                   message:@"Enter your VIP GPS License Key to activate:"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    
-    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
-        textField.placeholder = @"XXXX-XXXX-XXXX";
-        textField.textAlignment = NSTextAlignmentCenter;
-        textField.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
-    }];
-    
-    UIAlertAction *activateAction = [UIAlertAction actionWithTitle:@"ACTIVATE" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        NSString *rawKey = alert.textFields.firstObject.text;
-        NSString *key = [rawKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (!key || key.length < 5) {
-            showLicenseActivationDialog(rootVC, completion);
+static void showLicenseActivationDialog(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        while (rootVC.presentedViewController) {
+            rootVC = rootVC.presentedViewController;
+        }
+        if (!rootVC) return;
+        
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
+                                                                       message:@"Enter your VIP GPS License Key to activate:"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        
+        [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+            textField.placeholder = @"XXXX-XXXX-XXXX";
+            textField.textAlignment = NSTextAlignmentCenter;
+            textField.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
+            textField.autocorrectionType = UITextAutocorrectionTypeNo;
+        }];
+        
+        UIAlertAction *activateAction = [UIAlertAction actionWithTitle:@"ACTIVATE" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            NSString *rawKey = alert.textFields.firstObject.text;
+            NSString *key = [rawKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (!key || key.length < 5) {
+                showLicenseActivationDialog();
+                return;
+            }
+            
+            NSString *hwid = getPersistentDeviceHWID();
+            
+            // Remote verification against Hostinger VPS
+            NSString *urlStr = [NSString stringWithFormat:@"https://hadimod.tech/admin/bind_dylib?key=%@&hwid=%@",
+                                [key stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]],
+                                [hwid stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]]];
+            
+            NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+            req.HTTPMethod = @"GET";
+            req.timeoutInterval = 10.0;
+            
+            [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+                NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (!error && httpRes.statusCode == 200) {
+                        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+                        [defs setObject:key forKey:kCLS_PrefKey_LicenseKey];
+                        [defs setObject:hwid forKey:kCLS_PrefKey_BoundDev];
+                        if (![defs doubleForKey:kCLS_PrefKey_FirstActive]) {
+                            [defs setDouble:[[NSDate date] timeIntervalSince1970] forKey:kCLS_PrefKey_FirstActive];
+                        }
+                        [defs synchronize];
+                        
+                        CLS_InstallDoubleTapGesture();
+                        
+                        UIAlertController *succAlert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
+                                                                                          message:@"✓ Key Activated Successfully!\n3 Fingers Double-Tap anywhere to open GPS Radar."
+                                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                        [succAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                        [rootVC presentViewController:succAlert animated:YES completion:nil];
+                    } else {
+                        UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
+                                                                                          message:@"Activation failed. Key is expired, deleted, or locked to another iPhone!"
+                                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                        [errAlert addAction:[UIAlertAction actionWithTitle:@"RETRY" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull a) {
+                            showLicenseActivationDialog();
+                        }]];
+                        [rootVC presentViewController:errAlert animated:YES completion:nil];
+                    }
+                });
+            }] resume];
+        }];
+        
+        [alert addAction:activateAction];
+        [rootVC presentViewController:alert animated:YES completion:nil];
+    });
+}
+
+static void verifyLicenseOnAppLaunch(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+        NSString *savedKey = [defs stringForKey:kCLS_PrefKey_LicenseKey];
+        NSString *hwid = getPersistentDeviceHWID();
+        
+        // Shield 1: Local Clock Expiry (30 Days)
+        double firstActive = [defs doubleForKey:kCLS_PrefKey_FirstActive];
+        if (firstActive > 0) {
+            double elapsed = [[NSDate date] timeIntervalSince1970] - firstActive;
+            if (elapsed > (30.0 * 86400.0)) {
+                [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
+                [defs synchronize];
+                savedKey = nil;
+            }
+        }
+        
+        if (!savedKey || savedKey.length < 5) {
+            showLicenseActivationDialog();
             return;
         }
         
-        NSString *hwid = getPersistentDeviceHWID();
-        
-        // Remote verification against Hostinger VPS
+        // Shield 2: Remote Revocation & Multi-device Lock Check
         NSString *urlStr = [NSString stringWithFormat:@"https://hadimod.tech/admin/bind_dylib?key=%@&hwid=%@",
-                            [key stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]],
+                            [savedKey stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]],
                             [hwid stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]]];
         
         NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
         req.HTTPMethod = @"GET";
-        req.timeoutInterval = 10.0;
+        req.timeoutInterval = 8.0;
         
         [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
             NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (!error && httpRes.statusCode == 200) {
-                    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-                    [defs setObject:key forKey:kCLS_PrefKey_LicenseKey];
-                    [defs setObject:hwid forKey:kCLS_PrefKey_BoundDev];
-                    if (![defs doubleForKey:kCLS_PrefKey_FirstActive]) {
-                        [defs setDouble:[[NSDate date] timeIntervalSince1970] forKey:kCLS_PrefKey_FirstActive];
-                    }
-                    [defs synchronize];
-                    
-                    if (completion) completion();
+                    CLS_InstallDoubleTapGesture();
                 } else {
-                    UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"DEV ABDULLAH X HADI MOD"
-                                                                                      message:@"Activation failed. Key is expired, deleted, or locked to another iPhone!"
-                                                                               preferredStyle:UIAlertControllerStyleAlert];
-                    [errAlert addAction:[UIAlertAction actionWithTitle:@"RETRY" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull a) {
-                        showLicenseActivationDialog(rootVC, completion);
-                    }]];
-                    [rootVC presentViewController:errAlert animated:YES completion:nil];
+                    [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
+                    [defs synchronize];
+                    showLicenseActivationDialog();
                 }
             });
         }] resume];
+    });
+}
+
+#pragma mark - CONSTRUCTOR INITIALIZER
+
+__attribute__((constructor)) static void CLS_Init(void) {
+    // 1. Swizzle AppStore Receipt to bypass "Unauthorized rider app" on login
+    Method origReceipt = class_getInstanceMethod([NSBundle class], @selector(appStoreReceiptURL));
+    Method swizReceipt = class_getInstanceMethod([NSBundle class], @selector(cls_appStoreReceiptURL));
+    if (origReceipt && swizReceipt) {
+        method_exchangeImplementations(origReceipt, swizReceipt);
+    }
+    
+    // 2. Swizzle CoreLocation Manager
+    Method origSetDel = class_getInstanceMethod([CLLocationManager class], @selector(setDelegate:));
+    Method swizSetDel = class_getInstanceMethod([CLLocationManager class], @selector(cls_setDelegate:));
+    if (origSetDel && swizSetDel) {
+        method_exchangeImplementations(origSetDel, swizSetDel);
+    }
+    
+    Method origLoc = class_getInstanceMethod([CLLocationManager class], @selector(location));
+    Method swizLoc = class_getInstanceMethod([CLLocationManager class], @selector(cls_location));
+    if (origLoc && swizLoc) {
+        method_exchangeImplementations(origLoc, swizLoc);
+    }
+    
+    // 3. Register Application Did Become Active -> Triggers Password Popup on App Open!
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification *note) {
+        verifyLicenseOnAppLaunch();
     }];
-    
-    [alert addAction:activateAction];
-    [rootVC presentViewController:alert animated:YES completion:nil];
-}
-
-static void verifyLicenseAndOpenRadar(UIViewController *rootVC) {
-    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    NSString *savedKey = [defs stringForKey:kCLS_PrefKey_LicenseKey];
-    NSString *hwid = getPersistentDeviceHWID();
-    
-    // Shield 1: Local Clock Expiry (30 Days)
-    double firstActive = [defs doubleForKey:kCLS_PrefKey_FirstActive];
-    if (firstActive > 0) {
-        double elapsed = [[NSDate date] timeIntervalSince1970] - firstActive;
-        if (elapsed > (30.0 * 86400.0)) {
-            [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
-            [defs synchronize];
-            savedKey = nil;
-        }
-    }
-    
-    if (!savedKey || savedKey.length < 5) {
-        showLicenseActivationDialog(rootVC, ^{
-            CLSViewController *radar = [[CLSViewController alloc] init];
-            radar.modalPresentationStyle = UIModalPresentationFullScreen;
-            [rootVC presentViewController:radar animated:YES completion:nil];
-        });
-        return;
-    }
-    
-    // Shield 2: Remote Revocation & Multi-device Lock Check
-    NSString *urlStr = [NSString stringWithFormat:@"https://hadimod.tech/admin/bind_dylib?key=%@&hwid=%@",
-                        [savedKey stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]],
-                        [hwid stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]]];
-    
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
-    req.HTTPMethod = @"GET";
-    req.timeoutInterval = 8.0;
-    
-    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
-        NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (!error && httpRes.statusCode == 200) {
-                CLSViewController *radar = [[CLSViewController alloc] init];
-                radar.modalPresentationStyle = UIModalPresentationFullScreen;
-                [rootVC presentViewController:radar animated:YES completion:nil];
-            } else {
-                [defs removeObjectForKey:kCLS_PrefKey_LicenseKey];
-                [defs synchronize];
-                showLicenseActivationDialog(rootVC, ^{
-                    CLSViewController *radar = [[CLSViewController alloc] init];
-                    radar.modalPresentationStyle = UIModalPresentationFullScreen;
-                    [rootVC presentViewController:radar animated:YES completion:nil];
-                });
-            }
-        });
-    }] resume];
-}
-
-#pragma mark - GESTURE INJECTION (3 Fingers Double Tap)
-
-@interface UIWindow (CLSWindowHook)
-- (void)cls_didMoveToWindow;
-@end
-
-static void handleTripleFingerDoubleTap(id self, SEL _cmd, UITapGestureRecognizer *gesture) {
-    if (gesture.state == UIGestureRecognizerStateEnded) {
-        UIWindow *window = (UIWindow *)gesture.view;
-        UIViewController *rootVC = window.rootViewController;
-        while (rootVC.presentedViewController) {
-            rootVC = rootVC.presentedViewController;
-        }
-        if (rootVC) {
-            verifyLicenseAndOpenRadar(rootVC);
-        }
-    }
-}
-
-%hook UIWindow
-
-- (void)didMoveToWindow {
-    %orig;
-    
-    BOOL hasGesture = NO;
-    for (UIGestureRecognizer *g in self.gestureRecognizers) {
-        if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
-            UITapGestureRecognizer *tap = (UITapGestureRecognizer *)g;
-            if (tap.numberOfTouchesRequired == 3 && tap.numberOfTapsRequired == 2) {
-                hasGesture = YES;
-                break;
-            }
-        }
-    }
-    
-    if (!hasGesture) {
-        UITapGestureRecognizer *threeFingerDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(cls_handleTripleFingerTap:)];
-        threeFingerDoubleTap.numberOfTouchesRequired = 3;
-        threeFingerDoubleTap.numberOfTapsRequired = 2;
-        threeFingerDoubleTap.cancelsTouchesInView = NO;
-        [self addGestureRecognizer:threeFingerDoubleTap];
-    }
-}
-
-%new
-- (void)cls_handleTripleFingerTap:(UITapGestureRecognizer *)gesture {
-    handleTripleFingerDoubleTap(self, _cmd, gesture);
-}
-
-%end
-
-#pragma mark - CONSTRUCTOR
-
-%ctor {
-    @autoreleasepool {
-        NSLog(@"[DEV ABDULLAH X HADI MOD] Tweak loaded. Target Server: https://hadimod.tech");
-    }
 }
